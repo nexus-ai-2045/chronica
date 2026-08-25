@@ -1,0 +1,18 @@
+# 実データは絶対にコミットしない (external_share_allowed: false)
+data/
+*.db
+*.db-*
+chronica-data.js
+chronica-v2-data.js
+*-locked.html
+deploy-site/
+mock-source/
+*.ndjson
+# secrets
+.env
+.env.*
+!.env.example
+# python
+__pycache__/
+*.pyc
+.venv/

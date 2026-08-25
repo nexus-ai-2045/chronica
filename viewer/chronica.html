@@ -1,0 +1,836 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Chronica v2 — 対象サーバー 年代記（private local / 大規模データ対応）</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb;
+    --ink-1: #0b0b0b; --ink-2: #52514e; --ink-muted: #898781;
+    --grid: #e1e0d9; --baseline: #c3c2b7; --ring: rgba(11,11,11,0.10);
+    --accent: #4a3aa7;
+    --t1: #2a78d6; --t2: #eb6834; --t3: #1baf7a; --t4: #eda100;
+    --t5: #e87ba4; --t6: #008300; --t7: #4a3aa7; --t8: #e34948;
+    --warn-bg: #fdf6e3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19;
+      --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-muted: #898781;
+      --grid: #2c2c2a; --baseline: #383835; --ring: rgba(255,255,255,0.10);
+      --accent: #9085e9;
+      --t1: #3987e5; --t2: #d95926; --t3: #199e70; --t4: #c98500;
+      --t5: #d55181; --t6: #008300; --t7: #9085e9; --t8: #e66767;
+      --warn-bg: #262115;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--ink-1);
+    font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 0 20px 80px; }
+
+  header.app {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 0; border-bottom: 1px solid var(--grid); flex-wrap: wrap;
+  }
+  .logo { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; }
+  .logo .mark { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); position: relative; }
+  .logo .mark::after { content: ""; position: absolute; left: 4px; right: 4px; top: 10px; height: 2px; background: var(--page); border-radius: 2px; }
+  .crumb { color: var(--ink-2); font-size: 13px; }
+  .crumb b { color: var(--ink-1); font-weight: 600; }
+  .spacer { flex: 1; }
+  .private-badge {
+    font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--ink-2); border: 1px solid var(--grid);
+    background: var(--warn-bg);
+    padding: 3px 8px; border-radius: 999px;
+  }
+
+  .hero { padding: 30px 0 6px; }
+  .hero h1 { font-size: clamp(21px, 3.2vw, 28px); margin: 0 0 6px; font-weight: 750; text-wrap: balance; letter-spacing: -0.01em; }
+  .hero p { margin: 0; color: var(--ink-2); max-width: 68ch; font-size: 14.5px; }
+
+  #data-missing {
+    display: none; margin: 20px 0; padding: 16px 18px; border: 1px solid var(--grid);
+    background: var(--warn-bg); border-radius: 10px; font-size: 14px; color: var(--ink-1);
+  }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 20px 0 6px; }
+  .stat { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 12px 14px; }
+  .stat .k { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); }
+  .stat .v { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  .stat .v small { font-size: 12px; font-weight: 500; color: var(--ink-2); margin-left: 2px; }
+
+  section.panel { background: var(--surface); border: 1px solid var(--ring); border-radius: 12px; padding: 18px 18px 14px; margin-top: 18px; }
+  .panel-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+  .panel-head h2 { font-size: 15px; margin: 0; font-weight: 700; }
+  .panel-head .hint { font-size: 12.5px; color: var(--ink-muted); }
+
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 4px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2);
+    border: 1px solid var(--grid); background: transparent; border-radius: 999px;
+    padding: 4px 11px; cursor: pointer; font-family: inherit;
+  }
+  .chip .sw { width: 10px; height: 10px; border-radius: 3px; }
+  .chip[aria-pressed="true"] { border-color: var(--ink-2); color: var(--ink-1); font-weight: 600; }
+  .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  svg text { font-family: inherit; }
+  .axis-label { fill: var(--ink-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .stream-label { font-size: 12px; font-weight: 700; paint-order: stroke; stroke-width: 3.5px; stroke-linejoin: round; }
+  .lane-label { fill: var(--ink-2); font-size: 12px; }
+
+  #tooltip {
+    position: fixed; pointer-events: none; z-index: 30;
+    background: var(--surface); color: var(--ink-1);
+    border: 1px solid var(--ring); border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.18);
+    padding: 8px 11px; font-size: 12.5px; max-width: 280px;
+    opacity: 0; transition: opacity .1s linear;
+  }
+  @media (prefers-reduced-motion: reduce) { #tooltip { transition: none; } }
+  #tooltip .tt-top { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+  #tooltip .tt-sw { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+  #tooltip .tt-sub { color: var(--ink-muted); font-size: 11.5px; }
+  #tooltip .tt-body { margin-top: 3px; color: var(--ink-2); }
+
+  .search-row { display: flex; align-items: center; gap: 10px; margin: 4px 0 10px; flex-wrap: wrap; }
+  .search-row input[type="text"] {
+    flex: 1; min-width: 200px; max-width: 360px; font-size: 13px; padding: 7px 11px;
+    border: 1px solid var(--grid); border-radius: 8px; background: var(--page); color: var(--ink-1);
+  }
+  .search-row input[type="text"]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .search-count { font-size: 12px; color: var(--ink-muted); }
+
+  .msg-list { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
+  .msg { display: grid; grid-template-columns: 34px 1fr; gap: 10px; padding: 8px 10px; border-radius: 8px; }
+  .msg:hover { background: color-mix(in oklab, var(--ink-1) 4%, transparent); }
+  .avatar {
+    width: 30px; height: 30px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; color: #fff; flex: none;
+  }
+  .msg .meta { font-size: 12px; color: var(--ink-muted); }
+  .msg .meta b { color: var(--ink-1); font-size: 13px; margin-right: 6px; }
+  .msg .text { font-size: 13.5px; color: var(--ink-2); white-space: pre-wrap; word-break: break-word; }
+  .msg .topic-tag { display: inline-block; font-size: 10.5px; padding: 1px 7px; border-radius: 999px; color: #fff; margin-left: 6px; vertical-align: 1px; }
+  .approx { font-size: 10.5px; color: var(--ink-muted); border: 1px solid var(--grid); border-radius: 999px; padding: 0 6px; margin-left: 6px; }
+  .empty { color: var(--ink-muted); font-size: 13px; padding: 14px 4px; }
+  .thin-note { font-size: 11.5px; color: var(--ink-muted); margin: 4px 0 0; }
+
+  .load-more-row { margin-top: 10px; }
+  .load-more {
+    font-size: 12.5px; padding: 6px 14px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--grid); background: var(--page); color: var(--ink-1); font-family: inherit;
+  }
+  .load-more:hover { border-color: var(--ink-2); }
+
+  details.tbl { margin-top: 18px; }
+  details.tbl summary { cursor: pointer; font-size: 13px; color: var(--ink-2); }
+  table { border-collapse: collapse; width: 100%; margin-top: 10px; font-size: 12.5px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { color: var(--ink-muted); font-weight: 600; font-size: 11.5px; letter-spacing: .04em; }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tbl-scroll { overflow-x: auto; max-height: 480px; overflow-y: auto; }
+
+  footer.note { margin-top: 26px; font-size: 12px; color: var(--ink-muted); max-width: 78ch; }
+  footer.note b { color: var(--ink-2); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="app">
+    <span class="logo"><span class="mark" aria-hidden="true"></span>Chronica v2</span>
+    <span class="crumb">/ <b id="crumb-server">…</b> › 取得済みスナップショット（全チャンネル） › <span id="crumb-period">…</span></span>
+    <span class="crumb" id="data-generated" style="display:none"></span>
+    <span class="spacer"></span>
+    <span class="private-badge">private local only・外部共有不可</span>
+  </header>
+
+  <div class="hero">
+    <h1 id="hero-title">全チャンネル、何が起きていたか。</h1>
+    <p>ローカルに取得済みの Discord スナップショット（DCB 正本）だけを使った実データ版です。メッセージ数が多いチャンネルは「話題の川」で上位14本+その他に集約し、選ぶと発言者レーンと発言リストにズームできます。</p>
+  </div>
+
+  <div id="data-missing">
+    <b>chronica-data.js が見つかりません。</b>
+    データ生成ジョブが完了して <code>./chronica-data.js</code>（<code>window.CHRONICA_V2</code>）が置かれてから、このファイルを再読み込みしてください。
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>チャンネルの川 — 上位14チャンネル + その他</h2>
+      <span class="hint" id="river-hint">帯 / チップをクリックで選択</span>
+    </div>
+    <div class="chips" id="chips" role="group" aria-label="チャンネルフィルタ"></div>
+    <div><svg id="river" role="img" aria-label="チャンネルごとの発言量の推移"></svg></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2 id="lanes-title">発言者タイムライン</h2>
+      <span class="hint" id="lanes-hint">チャンネルを選ぶと発言者レーン表示にズームします</span>
+    </div>
+    <div><svg id="lanes" role="img" aria-label="メンバー別の発言タイムライン"></svg></div>
+    <p class="thin-note" id="thin-note" style="display:none"></p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2 id="detail-title">流れを読む</h2>
+      <span class="hint" id="detail-hint">上のグラフでチャンネルを選ぶと、その流れの発言が新しい順に並びます</span>
+    </div>
+    <div class="search-row">
+      <input type="text" id="search-input" placeholder="本文・発言者で検索（部分一致）" autocomplete="off">
+      <span class="search-count" id="search-count"></span>
+    </div>
+    <div class="msg-list" id="msgs"><div class="empty">チャンネルが未選択です。「チャンネルの川」の帯、またはチップをクリックしてください。</div></div>
+    <div class="load-more-row" id="load-more-row" style="display:none">
+      <button class="load-more" id="load-more-btn" type="button">さらに50件</button>
+    </div>
+
+    <details class="tbl">
+      <summary>チャンネル一覧で見る（全チャンネル）</summary>
+      <div class="tbl-scroll">
+        <table id="channel-table">
+          <thead><tr><th>チャンネル</th><th>メッセージ数</th><th>初回</th><th>最終</th><th>取得</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </details>
+  </section>
+
+  <footer class="note">
+    <b>非公開ローカルビュー。</b>データは <code>Documents/discord/raw-snapshots</code>（DCB append-only NDJSON）由来で、外部共有・引用・転載はしない。
+    取得: cmux ブラウザキャプチャ（message_id 付き）。「取得」列が未取得のチャンネルは可視範囲のみのスナップショットで、件数・期間が実態より少ない場合がある。
+  </footer>
+</div>
+
+<div id="tooltip" role="presentation"></div>
+
+<script src="./chronica-data.js"></script>
+<script>
+// ===== BUILD_MODEL_START =====
+// buildModel は DOM に触れない純粋関数。起動時の重い集計（上位14抽出・日次集計・
+// 著者別カウント・チャンネル別グルーピング）をここに1本化し、Node からもテスト可能にする。
+function buildModel(data) {
+  const channels = Array.isArray(data.channels) ? data.channels : [];
+  const messages = Array.isArray(data.messages) ? data.messages : [];
+  const DAY = 86400000;
+  const JST_OFFSET = 9 * 3600000;
+
+  // チャンネル解決: メッセージの c (チャンネル索引) → チャンネルメタ。
+  // 契約上 c は channels[].i と対応する想定だが、配列位置しか一致しないデータにも耐えるようフォールバックする。
+  const channelByI = new Map();
+  channels.forEach(ch => { if (ch && ch.i !== undefined) channelByI.set(ch.i, ch); });
+  function resolveChannel(c) {
+    if (channelByI.has(c)) return channelByI.get(c);
+    if (channels[c]) return channels[c];
+    return { i: c, id: String(c), name: "不明チャンネル(" + c + ")", n: 0, first: null, last: null, full: false };
+  }
+
+  // 1パスで ts→d(ms) 付与・チャンネル別カウント・チャンネル別グルーピングを実施
+  const countByC = new Map();
+  const groupByC = new Map(); // c -> enriched message[]（messages が ts 昇順という契約のため、そのままフィルタしても昇順を維持）
+  let minTs = Infinity, maxTs = -Infinity;
+  const enriched = messages.map(m => {
+    const d = new Date(m.ts).getTime();
+    if (Number.isFinite(d)) { if (d < minTs) minTs = d; if (d > maxTs) maxTs = d; }
+    const em = Object.assign({}, m, { d: d });
+    countByC.set(m.c, (countByC.get(m.c) || 0) + 1);
+    if (!groupByC.has(m.c)) groupByC.set(m.c, []);
+    groupByC.get(m.c).push(em);
+    return em;
+  });
+  if (!Number.isFinite(minTs)) { minTs = Date.now(); maxTs = Date.now(); }
+
+  // 上位14チャンネル抽出（メッセージ数降順。同数は c を文字列比較して安定化）
+  const TOP_N = 14;
+  const cList = Array.from(countByC.keys());
+  cList.sort((a, b) => {
+    const diff = countByC.get(b) - countByC.get(a);
+    if (diff !== 0) return diff;
+    return String(a).localeCompare(String(b));
+  });
+  const topCs = cList.slice(0, TOP_N);
+  const otherCs = cList.slice(TOP_N);
+  const topSet = new Set(topCs);
+
+  const seriesMeta = topCs.map((c, pos) => ({
+    kind: "channel", c: c, pos: pos, channel: resolveChannel(c), total: countByC.get(c),
+  }));
+  const otherTotal = otherCs.reduce((s, c) => s + countByC.get(c), 0);
+  seriesMeta.push({ kind: "other", pos: TOP_N, cs: otherCs, total: otherTotal });
+  const OTHER_IDX = seriesMeta.length - 1;
+
+  // 期間: JST 日境界で START(最小日 0:00) と DAYS(日数) を算出
+  const jstDayStart = ms => Math.floor((ms + JST_OFFSET) / DAY) * DAY - JST_OFFSET;
+  const START = jstDayStart(minTs);
+  const DAYS = Math.max(1, Math.round((jstDayStart(maxTs) - START) / DAY) + 1);
+
+  // 日次集計（seriesMeta と同じ並び順 = 15系列）— 1パス
+  const dailySeries = seriesMeta.map(() => Array(DAYS).fill(0));
+  const posByC = new Map();
+  seriesMeta.forEach((sm, idx) => { if (sm.kind === "channel") posByC.set(sm.c, idx); });
+  enriched.forEach(m => {
+    if (!Number.isFinite(m.d)) return;
+    const day = Math.floor((m.d - START) / DAY);
+    if (day < 0 || day >= DAYS) return;
+    const idx = posByC.has(m.c) ? posByC.get(m.c) : OTHER_IDX;
+    dailySeries[idx][day] += 1;
+  });
+
+  // 全体の日次密度（未選択時の1行バー表示用）
+  const dailyTotal = Array(DAYS).fill(0);
+  dailySeries.forEach(sr => sr.forEach((v, d) => { dailyTotal[d] += v; }));
+
+  // チャンネル別 / その他集約 の著者別カウント（レーン上位20人抽出に使用。選択のたびに全件走査しないための事前計算）
+  const authorCountsByC = new Map();
+  groupByC.forEach((arr, c) => {
+    const counts = new Map();
+    arr.forEach(m => counts.set(m.a, (counts.get(m.a) || 0) + 1));
+    authorCountsByC.set(c, counts);
+  });
+  const otherAuthorCounts = new Map();
+  otherCs.forEach(c => {
+    (groupByC.get(c) || []).forEach(m => otherAuthorCounts.set(m.a, (otherAuthorCounts.get(m.a) || 0) + 1));
+  });
+  // その他チャンネル群のメッセージ（messages 全体が ts 昇順という契約のため、フィルタのみで昇順を維持）
+  const otherMessages = enriched.filter(m => !topSet.has(m.c));
+
+  const fullCount = channels.filter(ch => ch && ch.full).length;
+
+  return {
+    channels: channels, messages: enriched, DAY: DAY, JST_OFFSET: JST_OFFSET, START: START, DAYS: DAYS,
+    seriesMeta: seriesMeta, dailySeries: dailySeries, dailyTotal: dailyTotal,
+    countByC: countByC, groupByC: groupByC,
+    authorCountsByC: authorCountsByC, otherAuthorCounts: otherAuthorCounts,
+    otherMessages: otherMessages, otherCs: otherCs, topSet: topSet,
+    resolveChannel: resolveChannel,
+    stats: {
+      totalMessages: enriched.length,
+      totalAuthors: new Set(enriched.map(m => m.a)).size,
+      totalChannels: channels.length,
+      fullCount: fullCount,
+      fullRatio: channels.length ? fullCount / channels.length : 0,
+    },
+  };
+}
+// ===== BUILD_MODEL_END =====
+
+(() => {
+  const DATA = (typeof window !== "undefined") ? window.CHRONICA_V2 : undefined;
+  if (!DATA || !Array.isArray(DATA.messages) || DATA.messages.length === 0) {
+    const el = document.getElementById("data-missing");
+    if (el) el.style.display = "";
+    return;
+  }
+
+  const model = buildModel(DATA);
+  const MAX_DOTS = 2000; // 選択チャンネルのメッセージが多い場合の間引き上限
+  const laneGray = ["#7b7a75", "#8a8984", "#6f6e69", "#94938d"];
+
+  let selected = null; // null | {kind:'channel', c} | {kind:'other'}
+  let searchQuery = "";
+  let detailLimit = 50;
+  const tooltip = document.getElementById("tooltip");
+
+  const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const topicColor = pos => css("--t" + ((pos % 8) + 1));
+  // チャンネル c → 表示色（上位14に入っていれば系列色、それ以外はグレー）を一度だけ作る
+  const colorByC = new Map();
+  model.seriesMeta.forEach(sm => { if (sm.kind === "channel") colorByC.set(sm.c, topicColor(sm.pos)); });
+  const channelColor = c => colorByC.get(c) || css("--baseline");
+
+  function hashStr(s) {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    return Math.abs(h);
+  }
+  const avatarColor = name => laneGray[hashStr(String(name)) % laneGray.length];
+
+  const fmtDate = ms => { const d = new Date(ms); return (d.getMonth() + 1) + "/" + d.getDate(); };
+  const fmtTime = ms => { const d = new Date(ms); return d.getHours() + ":" + String(d.getMinutes()).padStart(2, "0"); };
+  const fmtBoth = ms => fmtDate(ms) + " " + fmtTime(ms);
+  const fmtDateWithYear = ms => { const d = new Date(ms); return d.getFullYear() + "/" + (d.getMonth() + 1) + "/" + d.getDate(); };
+
+  function periodRangeLabel(withYear) {
+    const endMs = model.START + (model.DAYS - 1) * model.DAY;
+    const startLabel = withYear ? fmtDateWithYear(model.START) : fmtDate(model.START);
+    return startLabel + "–" + fmtDate(endMs);
+  }
+  function periodDurationLabel(days) {
+    if (days <= 1) return "1日";
+    if (days <= 13) return days + "日間";
+    if (days <= 60) {
+      const weeksFloat = days / 7;
+      const weeksFloor = Math.floor(weeksFloat);
+      const rem = weeksFloat - weeksFloor;
+      if (rem < 0.25) return weeksFloor + "週間";
+      if (rem < 0.75) return weeksFloor + "週間半";
+      return (weeksFloor + 1) + "週間";
+    }
+    return Math.round(days / 30) + "ヶ月";
+  }
+  function riverTicks() {
+    const DAYS = model.DAYS, START = model.START, DAY = model.DAY;
+    if (DAYS <= 21) {
+      const ticks = [];
+      for (let d = 0; d < DAYS; d += 7) ticks.push(d);
+      if (ticks[ticks.length - 1] !== DAYS - 1) ticks.push(DAYS - 1);
+      return ticks;
+    }
+    const monthStarts = [];
+    for (let d = 0; d < DAYS; d++) {
+      if (new Date(START + d * DAY).getDate() === 1) monthStarts.push(d);
+    }
+    let ticks = Array.from(new Set([0, ...monthStarts, DAYS - 1])).sort((a, b) => a - b);
+    const MAX_TICKS = 7;
+    if (ticks.length > MAX_TICKS) {
+      const step = (ticks.length - 1) / (MAX_TICKS - 1);
+      const picked = [];
+      for (let i = 0; i < MAX_TICKS; i++) picked.push(ticks[Math.round(i * step)]);
+      ticks = Array.from(new Set(picked));
+    }
+    return ticks;
+  }
+
+  function showTip(html, x, y) {
+    tooltip.innerHTML = html; tooltip.style.opacity = 1;
+    const pad = 14;
+    requestAnimationFrame(() => {
+      const r = tooltip.getBoundingClientRect();
+      let left = x + pad, top = y + pad;
+      if (left + r.width > innerWidth - 8) left = x - r.width - pad;
+      if (top + r.height > innerHeight - 8) top = y - r.height - pad;
+      tooltip.style.left = left + "px"; tooltip.style.top = top + "px";
+    });
+  }
+  const hideTip = () => tooltip.style.opacity = 0;
+
+  function elt(tag, attrs) {
+    const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  function isSelectedSeries(sm) {
+    if (!selected) return false;
+    if (sm.kind === "channel") return selected.kind === "channel" && selected.c === sm.c;
+    return selected.kind === "other";
+  }
+  function selectSeries(sm) {
+    const willSelect = sm.kind === "channel" ? { kind: "channel", c: sm.c } : { kind: "other" };
+    selected = isSelectedSeries(sm) ? null : willSelect;
+    detailLimit = 50;
+    update();
+  }
+  // 現在の選択に対応するメッセージ配列（ts 昇順）を返す
+  function selectionMessages() {
+    if (!selected) return [];
+    if (selected.kind === "channel") return model.groupByC.get(selected.c) || [];
+    return model.otherMessages;
+  }
+  function selectionAuthorCounts() {
+    if (!selected) return new Map();
+    if (selected.kind === "channel") return model.authorCountsByC.get(selected.c) || new Map();
+    return model.otherAuthorCounts;
+  }
+  function selectionLabel() {
+    if (!selected) return "";
+    if (selected.kind === "channel") return model.resolveChannel(selected.c).name;
+    return "その他（" + model.otherCs.length + "チャンネル集約）";
+  }
+  function selectionColor() {
+    if (!selected) return css("--baseline");
+    if (selected.kind === "channel") return channelColor(selected.c);
+    return css("--baseline");
+  }
+
+  // ---- header / hero ----
+  function renderHeaderAndHero() {
+    const serverEl = document.getElementById("crumb-server");
+    if (serverEl) serverEl.textContent = DATA.server || "対象サーバー";
+    const crumbEl = document.getElementById("crumb-period");
+    if (crumbEl) crumbEl.textContent = periodRangeLabel(true);
+    const heroEl = document.getElementById("hero-title");
+    if (heroEl) heroEl.textContent = "全チャンネル、この" + periodDurationLabel(model.DAYS) + "、何が起きていたか。";
+    if (DATA.generated_at) {
+      const genEl = document.getElementById("data-generated");
+      if (genEl) {
+        const genMs = new Date(DATA.generated_at).getTime();
+        genEl.textContent = "/ データ生成: " + (Number.isNaN(genMs) ? DATA.generated_at : fmtBoth(genMs));
+        genEl.style.display = "";
+      }
+    }
+  }
+
+  // ---- stats ----
+  function renderStats() {
+    const s = model.stats;
+    const fullPct = (s.fullRatio * 100).toFixed(1);
+    document.getElementById("stats").innerHTML =
+      '<div class="stat"><div class="k">総メッセージ</div><div class="v">' + s.totalMessages + '<small>件</small></div></div>' +
+      '<div class="stat"><div class="k">発言者数</div><div class="v">' + s.totalAuthors + '<small>人</small></div></div>' +
+      '<div class="stat"><div class="k">チャンネル数</div><div class="v">' + s.totalChannels + '<small>ch</small></div></div>' +
+      '<div class="stat"><div class="k">期間</div><div class="v">' + periodRangeLabel(false) + '</div></div>' +
+      '<div class="stat"><div class="k">full 取得率</div><div class="v">' + fullPct + '<small>% (' + s.fullCount + '/' + s.totalChannels + ')</small></div></div>';
+  }
+
+  // ---- chips ----
+  function renderChips() {
+    const box = document.getElementById("chips");
+    box.innerHTML = "";
+    model.seriesMeta.forEach(sm => {
+      const b = document.createElement("button");
+      b.className = "chip";
+      b.setAttribute("aria-pressed", String(isSelectedSeries(sm)));
+      const name = sm.kind === "channel" ? model.resolveChannel(sm.c).name : ("その他（" + sm.cs.length + "ch）");
+      const color = sm.kind === "channel" ? topicColor(sm.pos) : css("--baseline");
+      b.innerHTML = '<span class="sw" style="background:' + color + '"></span>' + name +
+        '<span style="color:var(--ink-muted)">' + sm.total + '</span>';
+      b.addEventListener("click", () => selectSeries(sm));
+      box.appendChild(b);
+    });
+  }
+
+  // ---- streamgraph（15系列: 上位14チャンネル + その他）----
+  function renderRiver() {
+    const svg = document.getElementById("river");
+    const W = svg.parentElement.clientWidth || 960;
+    const H = 220, padL = 8, padR = 8, padT = 24, padB = 26;
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    svg.setAttribute("width", W); svg.setAttribute("height", H);
+    svg.innerHTML = "";
+    const DAYS = model.DAYS, START = model.START, DAY = model.DAY;
+    const SERIES = model.dailySeries;
+    const iw = W - padL - padR, ih = H - padT - padB;
+    const x = d => padL + (d / Math.max(1, DAYS - 1)) * iw;
+    const totals = model.dailyTotal;
+    const maxTotal = Math.max(...totals, 1);
+    const yScale = ih / maxTotal;
+
+    const layers = model.seriesMeta.map(() => ({ top: [], bot: [] }));
+    for (let d = 0; d < DAYS; d++) {
+      let y0 = H / 2 - (totals[d] * yScale) / 2;
+      SERIES.forEach((sr, pos) => {
+        const h = sr[d] * yScale;
+        layers[pos].top.push([x(d), y0]);
+        layers[pos].bot.push([x(d), y0 + h]);
+        y0 += h;
+      });
+    }
+    const smooth = pts => {
+      let p = "M" + pts[0][0] + "," + pts[0][1];
+      for (let i = 1; i < pts.length; i++) {
+        const x0 = pts[i - 1][0], y0 = pts[i - 1][1], x1 = pts[i][0], y1 = pts[i][1];
+        const mx = (x0 + x1) / 2;
+        p += " C" + mx + "," + y0 + " " + mx + "," + y1 + " " + x1 + "," + y1;
+      }
+      return p;
+    };
+
+    const ticks = riverTicks();
+    ticks.forEach((d, i) => {
+      const gx = x(d);
+      svg.appendChild(elt("line", { x1: gx, y1: padT - 8, x2: gx, y2: H - padB + 6, stroke: css("--grid"), "stroke-width": 1 }));
+      const tx = elt("text", { x: gx, y: H - 6, "text-anchor": i === 0 ? "start" : (i === ticks.length - 1 ? "end" : "middle"), class: "axis-label" });
+      tx.textContent = fmtDate(START + d * DAY);
+      svg.appendChild(tx);
+    });
+
+    model.seriesMeta.forEach((sm, pos) => {
+      const top = layers[pos].top, bot = layers[pos].bot.slice().reverse();
+      const pathD = smooth(top) + " L" + bot.map(p => p[0] + "," + p[1]).join(" L") + " Z";
+      const dim = selected !== null && !isSelectedSeries(sm);
+      const fill = sm.kind === "channel" ? topicColor(sm.pos) : css("--baseline");
+      const label = sm.kind === "channel" ? model.resolveChannel(sm.c).name : "その他";
+      const band = elt("path", {
+        d: pathD, fill: fill, stroke: css("--surface"), "stroke-width": 2,
+        opacity: dim ? 0.22 : 1, tabindex: 0, role: "button",
+        "aria-label": "チャンネル: " + label + " を選択",
+      });
+      band.style.cursor = "pointer";
+      band.addEventListener("click", () => selectSeries(sm));
+      band.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); band.dispatchEvent(new Event("click")); } });
+      band.addEventListener("mousemove", e => {
+        const rect = svg.getBoundingClientRect();
+        const d = Math.max(0, Math.min(DAYS - 1, Math.round(((e.clientX - rect.left) - padL) / iw * (DAYS - 1))));
+        const v = SERIES[pos][d];
+        showTip(
+          '<div class="tt-top"><span class="tt-sw" style="background:' + fill + '"></span>' + label + '</div>' +
+          '<div class="tt-sub">' + fmtDate(START + d * DAY) + ' ・ ' + (v ? v + " 件" : "取得なし") + '</div>',
+          e.clientX, e.clientY);
+      });
+      band.addEventListener("mouseleave", hideTip);
+      svg.appendChild(band);
+    });
+
+    // 直接ラベル: 選択中 + 件数上位3系列のみ（増えても重ならないよう凡例チップに任せる）
+    const totalsByPos = SERIES.map(sr => sr.reduce((a, b) => a + b, 0));
+    const labelPositions = new Set(
+      model.seriesMeta.map((sm, pos) => pos).sort((a, b) => totalsByPos[b] - totalsByPos[a]).slice(0, 3)
+    );
+    if (selected !== null) {
+      const selPos = model.seriesMeta.findIndex(sm => isSelectedSeries(sm));
+      if (selPos >= 0) labelPositions.add(selPos);
+    }
+    const placedLabels = [];
+    model.seriesMeta.forEach((sm, pos) => {
+      if (!labelPositions.has(pos)) return;
+      const sr = SERIES[pos];
+      let best = 0; sr.forEach((v, i) => { if (v > sr[best]) best = i; });
+      const midY = (layers[pos].top[best][1] + layers[pos].bot[best][1]) / 2;
+      const anchor = best < 3 ? "start" : (best > DAYS - 4 ? "end" : "middle");
+      const lx = x(best);
+      let ly = midY - 8 - (pos % 2) * 14;
+      let guard = 0;
+      while (placedLabels.some(p => Math.abs(p[0] - lx) < 60 && Math.abs(p[1] - ly) < 14) && guard < 6) { ly -= 16; guard++; }
+      placedLabels.push([lx, ly]);
+      const label = sm.kind === "channel" ? model.resolveChannel(sm.c).name : "その他";
+      const tx = elt("text", { x: lx, y: ly, "text-anchor": anchor, class: "stream-label" });
+      tx.textContent = label;
+      tx.style.fill = css("--ink-1"); tx.style.stroke = css("--surface");
+      tx.style.pointerEvents = "none";
+      if (selected !== null && !isSelectedSeries(sm)) tx.style.opacity = 0.3;
+      svg.appendChild(tx);
+    });
+  }
+
+  // ---- タイムライン: 未選択時=全体の日次密度バー1行 / 選択時=発言者レーン+dot ----
+  function renderLanes() {
+    const svg = document.getElementById("lanes");
+    const W = svg.parentElement.clientWidth || 960;
+    const thinNote = document.getElementById("thin-note");
+    thinNote.style.display = "none";
+
+    if (!selected) {
+      document.getElementById("lanes-title").textContent = "発言者タイムライン — 全体の日次密度";
+      document.getElementById("lanes-hint").textContent = "チャンネルを選ぶと発言者レーン表示にズームします（未選択時は密度バーのみ・個別 dot は描画しません）";
+      const H = 110, padL = 60, padR = 16, padT = 18, padB = 28;
+      svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+      svg.setAttribute("width", W); svg.setAttribute("height", H);
+      svg.innerHTML = "";
+      const DAYS = model.DAYS, START = model.START, DAY = model.DAY;
+      const iw = W - padL - padR, ih = H - padT - padB;
+      const totals = model.dailyTotal;
+      const maxTotal = Math.max(...totals, 1);
+      const barW = Math.max(1, iw / DAYS - 1);
+      totals.forEach((v, d) => {
+        const h = (v / maxTotal) * ih;
+        const bx = padL + (d / DAYS) * iw;
+        const by = padT + ih - h;
+        const rect = elt("rect", { x: bx, y: by, width: barW, height: Math.max(0, h), fill: css("--baseline") });
+        rect.addEventListener("mousemove", e => showTip(
+          '<div class="tt-top">' + fmtDate(START + d * DAY) + '</div><div class="tt-sub">' + v + ' 件（全チャンネル）</div>', e.clientX, e.clientY));
+        rect.addEventListener("mouseleave", hideTip);
+        svg.appendChild(rect);
+      });
+      const ticks = riverTicks();
+      ticks.forEach((d, i) => {
+        const gx = padL + (d / DAYS) * iw;
+        const tx = elt("text", { x: gx, y: H - 8, "text-anchor": i === 0 ? "start" : (i === ticks.length - 1 ? "end" : "middle"), class: "axis-label" });
+        tx.textContent = fmtDate(START + d * DAY);
+        svg.appendChild(tx);
+      });
+      return;
+    }
+
+    const msgs = selectionMessages(); // ts 昇順
+    const authorCounts = selectionAuthorCounts();
+    const sortedAuthors = Array.from(authorCounts.entries()).sort((a, b) => b[1] - a[1]).map(e => e[0]);
+    const OTHER_LABEL = "その他（集約）";
+    let members = sortedAuthors;
+    let otherSet = null;
+    if (sortedAuthors.length > 20) {
+      const top20 = sortedAuthors.slice(0, 20);
+      otherSet = new Set(sortedAuthors.slice(20));
+      members = [...top20, OTHER_LABEL];
+    }
+    const laneH = 30, padL = 130, padR = 16, padT = 18, padB = 28;
+    const H = padT + Math.max(1, members.length) * laneH + padB;
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    svg.setAttribute("width", W); svg.setAttribute("height", H);
+    svg.innerHTML = "";
+
+    document.getElementById("lanes-title").textContent = "発言者タイムライン — 「" + selectionLabel() + "」";
+    document.getElementById("lanes-hint").textContent = "もう一度クリックで解除 ・ 弧=返信";
+
+    const iw = W - padL - padR;
+    const ts = msgs.map(m => m.d).filter(Number.isFinite);
+    let t0 = ts.length ? Math.min(...ts) : model.START;
+    let t1 = ts.length ? Math.max(...ts) : model.START + model.DAY;
+    if (t1 - t0 < 60000) { t1 = t0 + 60000; } // 極端に短い場合の最小幅
+    const x = ms => padL + ((ms - t0) / (t1 - t0)) * iw;
+    const laneY = mi => padT + mi * laneH + laneH / 2;
+    const laneIdx = name => (otherSet && otherSet.has(name)) ? members.length - 1 : members.indexOf(name);
+
+    members.forEach((name, mi) => {
+      const y = laneY(mi);
+      svg.appendChild(elt("line", { x1: padL, y1: y, x2: W - padR, y2: y, stroke: css("--grid"), "stroke-width": 1 }));
+      const tx = elt("text", { x: padL - 10, y: y + 4, "text-anchor": "end", class: "lane-label" });
+      tx.textContent = name.length > 10 ? name.slice(0, 9) + "…" : name;
+      svg.appendChild(tx);
+    });
+
+    const TICKS = 5;
+    for (let k = 0; k <= TICKS; k++) {
+      const ms = t0 + (t1 - t0) * k / TICKS;
+      const gx = padL + iw * k / TICKS;
+      svg.appendChild(elt("line", { x1: gx, y1: padT - 6, x2: gx, y2: H - padB, stroke: css("--grid"), "stroke-width": 1, "stroke-dasharray": "2 3" }));
+      const tx = elt("text", { x: gx, y: H - 8, "text-anchor": k === 0 ? "start" : (k === TICKS ? "end" : "middle"), class: "axis-label" });
+      tx.textContent = fmtBoth(ms);
+      svg.appendChild(tx);
+    }
+
+    // dot 間引き: 選択メッセージが多い場合は等間隔サンプリングして描画数を抑える（レーン・件数計算には影響しない）
+    let dotMsgs = msgs;
+    let thinned = false;
+    if (msgs.length > MAX_DOTS) {
+      const step = Math.ceil(msgs.length / MAX_DOTS);
+      dotMsgs = msgs.filter((_, i) => i % step === 0);
+      thinned = true;
+    }
+    if (thinned) {
+      thinNote.textContent = "件数が多いため間引き表示中（全 " + msgs.length + " 件中 " + dotMsgs.length + " 件を表示。返信の弧は間引き時は非表示）";
+      thinNote.style.display = "";
+    }
+
+    const pos = {};
+    dotMsgs.forEach(m => { pos[m.id] = [x(m.d), laneY(laneIdx(m.a))]; });
+
+    if (!thinned) {
+      dotMsgs.forEach(m => {
+        if (m.ref == null || !(m.ref in pos)) return;
+        const p1 = pos[m.ref], p2 = pos[m.id];
+        const midX = (p1[0] + p2[0]) / 2;
+        const lift = Math.min(56, Math.abs(p2[0] - p1[0]) * 0.4 + 14);
+        const cy = Math.min(p1[1], p2[1]) - lift;
+        svg.appendChild(elt("path", {
+          d: "M" + p1[0] + "," + p1[1] + " Q" + midX + "," + cy + " " + p2[0] + "," + p2[1],
+          fill: "none", stroke: selectionColor(), "stroke-width": 1.6, opacity: 0.85,
+        }));
+      });
+    }
+
+    dotMsgs.forEach(m => {
+      const c = pos[m.id];
+      const isOther = otherSet && otherSet.has(m.a);
+      svg.appendChild(elt("circle", {
+        cx: c[0], cy: c[1], r: 4.5, fill: isOther ? css("--baseline") : selectionColor(),
+        stroke: css("--surface"), "stroke-width": 1.6,
+      }));
+      const hit = elt("circle", { cx: c[0], cy: c[1], r: 10, fill: "transparent" });
+      hit.style.cursor = "pointer";
+      hit.addEventListener("mousemove", e => showTip(
+        '<div class="tt-top"><span class="tt-sw" style="background:' + selectionColor() + '"></span>' + m.a +
+        '<span class="tt-sub">・' + fmtBoth(m.d) + '</span></div>' +
+        '<div class="tt-body">' + (m.x && m.x.length > 90 ? m.x.slice(0, 90) + "…" : (m.x || "")) + '</div>', e.clientX, e.clientY));
+      hit.addEventListener("mouseleave", hideTip);
+      svg.appendChild(hit);
+    });
+  }
+
+  // ---- 詳細リスト（チャンネル選択モード / 検索モード） ----
+  function msgRowHtml(m, colorForRow) {
+    const refMsg = (m.ref != null) ? model.messages.find(mm => mm.id === m.ref) : null; // 検索結果は件数上限つきのため許容
+    const replyNote = refMsg ? (" ↩ " + refMsg.a + " への返信") : "";
+    const ch = model.resolveChannel(m.c);
+    return '<div class="avatar" style="background:' + avatarColor(m.a) + '">' + (m.a ? m.a[0] : "?") + '</div>' +
+      '<div><div class="meta"><b>' + m.a + '</b>' + fmtBoth(m.d) +
+      '<span class="topic-tag" style="background:' + colorForRow + '">' + ch.name + '</span><span>' + replyNote + '</span></div>' +
+      '<div class="text"></div></div>';
+  }
+  function appendMsgRow(box, m, colorForRow) {
+    const div = document.createElement("div");
+    div.className = "msg";
+    div.innerHTML = msgRowHtml(m, colorForRow);
+    div.querySelector(".text").textContent = m.x || ""; // XSS 回避のため本文のみ textContent で挿入
+    box.appendChild(div);
+  }
+
+  function renderDetail() {
+    const box = document.getElementById("msgs");
+    const title = document.getElementById("detail-title");
+    const hint = document.getElementById("detail-hint");
+    const loadMoreRow = document.getElementById("load-more-row");
+    const searchCount = document.getElementById("search-count");
+    box.innerHTML = "";
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      const matches = model.messages.filter(m => (m.x || "").toLowerCase().includes(q) || (m.a || "").toLowerCase().includes(q));
+      title.textContent = "検索結果: 「" + searchQuery.trim() + "」";
+      const CAP = 200;
+      const shown = matches.slice(Math.max(0, matches.length - CAP)).reverse();
+      searchCount.textContent = matches.length + " 件ヒット" + (matches.length > CAP ? "（新しい " + CAP + " 件のみ表示）" : "");
+      hint.textContent = "検索中は川・タイムラインの表示は変わりません";
+      loadMoreRow.style.display = "none";
+      if (!shown.length) { box.innerHTML = '<div class="empty">一致するメッセージがありません。</div>'; return; }
+      shown.forEach(m => appendMsgRow(box, m, channelColor(m.c)));
+      return;
+    }
+    searchCount.textContent = "";
+
+    if (!selected) {
+      title.textContent = "流れを読む";
+      hint.textContent = "上のグラフでチャンネルを選ぶと、その流れの発言が新しい順に並びます";
+      loadMoreRow.style.display = "none";
+      box.innerHTML = '<div class="empty">チャンネルが未選択です。「チャンネルの川」の帯、またはチップをクリックしてください。</div>';
+      return;
+    }
+    const list = selectionMessages().slice().reverse(); // 新しい順
+    title.textContent = "「" + selectionLabel() + "」の流れ";
+    hint.textContent = list.length + " 件 ・ もう一度クリックで解除";
+    if (!list.length) { box.innerHTML = '<div class="empty">このチャンネルにはメッセージがありません。</div>'; loadMoreRow.style.display = "none"; return; }
+    const shown = list.slice(0, detailLimit);
+    shown.forEach(m => appendMsgRow(box, m, selectionColor()));
+    loadMoreRow.style.display = list.length > detailLimit ? "" : "none";
+  }
+
+  // ---- チャンネル一覧テーブル（全チャンネル。メッセージ本体は含まないので件数が増えても軽い） ----
+  function renderChannelTable() {
+    const tb = document.querySelector("#channel-table tbody");
+    tb.innerHTML = "";
+    const rows = model.channels.slice().sort((a, b) => (model.countByC.get(b.i) || 0) - (model.countByC.get(a.i) || 0));
+    rows.forEach(ch => {
+      const n = model.countByC.get(ch.i) || 0;
+      const tr = document.createElement("tr");
+      tr.innerHTML = '<td></td><td class="num">' + n + '</td><td class="num"></td><td class="num"></td><td>' + (ch.full ? "full" : "partial") + '</td>';
+      tr.children[0].textContent = ch.name || String(ch.i);
+      tr.children[2].textContent = ch.first ? fmtBoth(new Date(ch.first).getTime()) : "-";
+      tr.children[3].textContent = ch.last ? fmtBoth(new Date(ch.last).getTime()) : "-";
+      tb.appendChild(tr);
+    });
+  }
+
+  function update() { renderChips(); renderRiver(); renderLanes(); renderDetail(); }
+
+  document.getElementById("load-more-btn").addEventListener("click", () => { detailLimit += 50; renderDetail(); });
+  let searchDebounce = null;
+  document.getElementById("search-input").addEventListener("input", e => {
+    const v = e.target.value;
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => { searchQuery = v; renderDetail(); }, 150);
+  });
+
+  renderHeaderAndHero();
+  renderStats();
+  renderChannelTable();
+  update();
+  addEventListener("resize", update);
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", update);
+})();
+</script>
+</body>
+</html>
