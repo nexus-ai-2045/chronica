@@ -76,3 +76,77 @@ CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
     INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
     INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
 END;
+
+-- ここから ADR 0002 (要約キャッシュと話題レイヤ) の派生テーブル。
+-- messages / channels / sync_state / messages_fts およびそのトリガは一切変更しない。
+
+-- 要約キャッシュ。input_hash + model + prompt_version が同じなら再利用し、
+-- LLM を再度呼ばない (cache key derivation)。本文そのものはキーに使わない。
+CREATE TABLE IF NOT EXISTS summaries (
+    summary_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope_kind TEXT NOT NULL,           -- 'channel_period' | 'message_range'
+    channel_id TEXT NOT NULL,
+    period_start TEXT,                  -- ISO8601 (UTC)。scope_kind='channel_period' で使用
+    period_end TEXT,                    -- ISO8601 (UTC)。scope_kind='channel_period' で使用
+    range_start_id TEXT,                -- message_id。scope_kind='message_range' で使用
+    range_end_id TEXT,                  -- message_id。scope_kind='message_range' で使用
+    input_hash TEXT NOT NULL,           -- 入力メッセージ集合 (message_id 列) から導出したハッシュ
+    input_message_count INTEGER NOT NULL,
+    summary_text TEXT NOT NULL,
+    model TEXT NOT NULL,                -- 使用したモデル識別子
+    prompt_version TEXT NOT NULL,       -- 使用したプロンプトのバージョン
+    parent_summary_id INTEGER,          -- tree_summarize (要約の要約) の親。無ければ NULL
+    created_at TEXT NOT NULL,
+    superseded_at TEXT,                 -- 作り直されて無効化された時刻。有効なら NULL
+    FOREIGN KEY (parent_summary_id) REFERENCES summaries(summary_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_summaries_cache_key
+    ON summaries (input_hash, model, prompt_version);
+CREATE INDEX IF NOT EXISTS idx_summaries_channel ON summaries (channel_id);
+CREATE INDEX IF NOT EXISTS idx_summaries_parent ON summaries (parent_summary_id);
+
+-- 話題 (topic segmentation の結果)。origin で機械出力 (silver) と
+-- 人間確定版 (gold) を分ける。silver をそのまま正本にしない。
+CREATE TABLE IF NOT EXISTS topics (
+    topic_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    origin TEXT NOT NULL,               -- 'silver' | 'gold'
+    starts_at TEXT NOT NULL,            -- ISO8601 (UTC)
+    ends_at TEXT NOT NULL,              -- ISO8601 (UTC)
+    algorithm TEXT,                     -- origin='silver' の場合の生成手法名
+    algorithm_version TEXT,
+    created_at TEXT NOT NULL,
+    superseded_at TEXT                  -- adjudication で置き換えられた時刻。有効なら NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_topics_channel ON topics (channel_id);
+CREATE INDEX IF NOT EXISTS idx_topics_starts_at ON topics (starts_at);
+CREATE INDEX IF NOT EXISTS idx_topics_origin ON topics (origin);
+
+-- 話題とメッセージの対応 (多対多)。
+CREATE TABLE IF NOT EXISTS topic_messages (
+    topic_id INTEGER NOT NULL,
+    message_id TEXT NOT NULL,
+    PRIMARY KEY (topic_id, message_id),
+    FOREIGN KEY (topic_id) REFERENCES topics(topic_id),
+    FOREIGN KEY (message_id) REFERENCES messages(message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_topic_messages_message ON topic_messages (message_id);
+
+-- 人間による silver -> gold の裁定記録。
+CREATE TABLE IF NOT EXISTS adjudications (
+    adjudication_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    silver_topic_id INTEGER NOT NULL,
+    gold_topic_id INTEGER,              -- 'reject' の場合は NULL もありうる
+    action TEXT NOT NULL,               -- 'accept' | 'split' | 'merge' | 'relabel' | 'reject'
+    note TEXT,
+    decided_at TEXT NOT NULL,
+    FOREIGN KEY (silver_topic_id) REFERENCES topics(topic_id),
+    FOREIGN KEY (gold_topic_id) REFERENCES topics(topic_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_adjudications_silver ON adjudications (silver_topic_id);
+CREATE INDEX IF NOT EXISTS idx_adjudications_gold ON adjudications (gold_topic_id);
