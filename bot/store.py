@@ -12,12 +12,14 @@ dedupe は message_id (PK) のみ。本文 hash は使わない (壁打ち採択
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
@@ -206,18 +208,56 @@ def upsert_sync_state(
     conn.commit()
 
 
+_LIKE_ESCAPE_CHAR = "\\"
+
+
+def _escape_like_pattern(query: str) -> str:
+    """LIKE パターン中の `%` `_` `\\` をエスケープし、ユーザー入力を純粋なリテラルとして扱う。
+
+    ESCAPE 句 (`_LIKE_ESCAPE_CHAR`) とセットで使うこと。エスケープ文字自体も
+    先にエスケープしないと二重解釈されるため、`\\` -> `%` -> `_` の順で置換する。
+    """
+    escaped = query.replace(_LIKE_ESCAPE_CHAR, _LIKE_ESCAPE_CHAR * 2)
+    escaped = escaped.replace("%", _LIKE_ESCAPE_CHAR + "%")
+    escaped = escaped.replace("_", _LIKE_ESCAPE_CHAR + "_")
+    return escaped
+
+
 def search_fts(conn: sqlite3.Connection, query: str, limit: int = 50) -> list[dict[str, Any]]:
-    """messages_fts で全文検索し、該当する messages 行を返す (削除済みは除外)。"""
-    rows = conn.execute(
-        """
-        SELECT m.* FROM messages_fts f
-        JOIN messages m ON m.rowid = f.rowid
-        WHERE f.content MATCH ? AND m.deleted_at IS NULL
-        ORDER BY m.ts
-        LIMIT ?
-        """,
-        (query, limit),
-    ).fetchall()
+    """全文検索する。ADR 0001 に従い、クエリ長で経路を分けるハイブリッド実装。
+
+    - 3 文字以上: messages_fts (FTS5 trigram) の MATCH による索引検索
+    - 2 文字以下: LIKE '%q%' による全表走査 (trigram は 3 文字未満にヒットしない制約があるため)
+
+    どちらの経路でも deleted_at IS NULL の除外・件数上限・新しい順の並びを揃える。
+    関数のシグネチャ (引数・戻り値の型) は経路によらず不変。
+    """
+    if len(query) >= 3:
+        route = "fts"
+        rows = conn.execute(
+            """
+            SELECT m.* FROM messages_fts f
+            JOIN messages m ON m.rowid = f.rowid
+            WHERE f.content MATCH ? AND m.deleted_at IS NULL
+            ORDER BY m.ts DESC
+            LIMIT ?
+            """,
+            (query, limit),
+        ).fetchall()
+    else:
+        route = "like"
+        like_pattern = "%" + _escape_like_pattern(query) + "%"
+        rows = conn.execute(
+            f"""
+            SELECT * FROM messages
+            WHERE content LIKE ? ESCAPE '{_LIKE_ESCAPE_CHAR}' AND deleted_at IS NULL
+            ORDER BY ts DESC
+            LIMIT ?
+            """,
+            (like_pattern, limit),
+        ).fetchall()
+
+    logging.getLogger(__name__).debug("search_fts: route=%s query_len=%d hits=%d", route, len(query), len(rows))
     return [dict(r) for r in rows]
 
 
@@ -233,3 +273,155 @@ def fetch_channels(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """全チャンネルを channel_id 順で返す。"""
     rows = conn.execute("SELECT * FROM channels ORDER BY channel_id ASC").fetchall()
     return [dict(r) for r in rows]
+
+
+# --- ここから ADR 0002 (要約キャッシュと話題レイヤ) の操作関数。LLM 呼び出しは含まない。
+
+
+def compute_input_hash(message_ids: Iterable[str]) -> str:
+    """メッセージ集合から決定的なキャッシュキーを導出する。
+
+    message_id を昇順ソートしてから連結して SHA-256 を取る (壁打ち採択事項:
+    本文 hash は dedupe に使わない教訓を踏襲し、ここでも本文は一切使わない)。
+    渡す順序が違っても同じ集合なら同じ値になる。
+    """
+    sorted_ids = sorted(message_ids)
+    joined = "\n".join(sorted_ids)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
+def find_summary(
+    conn: sqlite3.Connection, input_hash: str, model: str, prompt_version: str
+) -> dict[str, Any] | None:
+    """キャッシュキー (input_hash + model + prompt_version) で有効な要約を探す。
+
+    superseded_at が NULL (無効化されていない) 行のみを対象にする。
+    """
+    row = conn.execute(
+        """
+        SELECT * FROM summaries
+        WHERE input_hash = ? AND model = ? AND prompt_version = ? AND superseded_at IS NULL
+        """,
+        (input_hash, model, prompt_version),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def upsert_summary(
+    conn: sqlite3.Connection,
+    scope_kind: str,
+    channel_id: str,
+    input_hash: str,
+    input_message_count: int,
+    summary_text: str,
+    model: str,
+    prompt_version: str,
+    period_start: str | None = None,
+    period_end: str | None = None,
+    range_start_id: str | None = None,
+    range_end_id: str | None = None,
+    parent_summary_id: int | None = None,
+) -> dict[str, Any]:
+    """要約をキャッシュに保存する。
+
+    同じ (input_hash, model, prompt_version) が既にあれば挿入せず既存行を返す
+    (cache key derivation)。無ければ新規挿入して挿入行を返す。
+    """
+    existing = find_summary(conn, input_hash, model, prompt_version)
+    if existing is not None:
+        return existing
+
+    created_at = utc_now_iso()
+    conn.execute(
+        """
+        INSERT INTO summaries (
+            scope_kind, channel_id, period_start, period_end,
+            range_start_id, range_end_id, input_hash, input_message_count,
+            summary_text, model, prompt_version, parent_summary_id, created_at
+        ) VALUES (
+            :scope_kind, :channel_id, :period_start, :period_end,
+            :range_start_id, :range_end_id, :input_hash, :input_message_count,
+            :summary_text, :model, :prompt_version, :parent_summary_id, :created_at
+        )
+        """,
+        {
+            "scope_kind": scope_kind,
+            "channel_id": channel_id,
+            "period_start": period_start,
+            "period_end": period_end,
+            "range_start_id": range_start_id,
+            "range_end_id": range_end_id,
+            "input_hash": input_hash,
+            "input_message_count": input_message_count,
+            "summary_text": summary_text,
+            "model": model,
+            "prompt_version": prompt_version,
+            "parent_summary_id": parent_summary_id,
+            "created_at": created_at,
+        },
+    )
+    conn.commit()
+
+    inserted = find_summary(conn, input_hash, model, prompt_version)
+    assert inserted is not None
+    return inserted
+
+
+def upsert_topic(
+    conn: sqlite3.Connection,
+    channel_id: str,
+    label: str,
+    origin: str,
+    starts_at: str,
+    ends_at: str,
+    algorithm: str | None = None,
+    algorithm_version: str | None = None,
+) -> int:
+    """話題を新規作成し topic_id を返す。origin は 'silver' | 'gold'。
+
+    silver / gold は別レコードとして共存する (silver を上書きしない)。
+    """
+    created_at = utc_now_iso()
+    cur = conn.execute(
+        """
+        INSERT INTO topics (
+            channel_id, label, origin, starts_at, ends_at,
+            algorithm, algorithm_version, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (channel_id, label, origin, starts_at, ends_at, algorithm, algorithm_version, created_at),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def link_topic_messages(conn: sqlite3.Connection, topic_id: int, message_ids: Iterable[str]) -> None:
+    """話題とメッセージを対応付ける (多対多)。既存の組は無視する (冪等)。"""
+    conn.executemany(
+        "INSERT OR IGNORE INTO topic_messages (topic_id, message_id) VALUES (?, ?)",
+        [(topic_id, message_id) for message_id in message_ids],
+    )
+    conn.commit()
+
+
+def record_adjudication(
+    conn: sqlite3.Connection,
+    silver_topic_id: int,
+    action: str,
+    gold_topic_id: int | None = None,
+    note: str | None = None,
+) -> int:
+    """silver topic に対する人間の裁定を記録し adjudication_id を返す。
+
+    action は 'accept' | 'split' | 'merge' | 'relabel' | 'reject'。
+    """
+    decided_at = utc_now_iso()
+    cur = conn.execute(
+        """
+        INSERT INTO adjudications (silver_topic_id, gold_topic_id, action, note, decided_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (silver_topic_id, gold_topic_id, action, note, decided_at),
+    )
+    conn.commit()
+    return int(cur.lastrowid)

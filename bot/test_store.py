@@ -133,6 +133,184 @@ def test_fts_search(db_path: str) -> None:
     conn.close()
 
 
+def test_search_hybrid_short_query(db_path: str) -> None:
+    """2文字以下のクエリは LIKE 経路に落ちてもヒットすること (ADR 0001)。"""
+    conn = store.get_connection(db_path)
+    store.init_db(conn)
+
+    store.upsert_message(conn, make_message("h1", content="日本語の開発を進める"))
+    store.upsert_message(conn, make_message("h2", content="別の話題です"))
+
+    # 2文字クエリ ("開発") は trigram に乗らないため LIKE 経路になる
+    results = store.search_fts(conn, "開発")
+    ids = {r["message_id"] for r in results}
+    check(ids == {"h1"}, "search_fts: 2文字クエリ (LIKE経路) でもヒットする")
+
+    conn.close()
+
+
+def test_search_hybrid_long_query(db_path: str) -> None:
+    """3文字以上のクエリは従来通り FTS 経路でヒットすること。"""
+    conn = store.get_connection(db_path)
+    store.init_db(conn)
+
+    store.upsert_message(conn, make_message("l1", content="ハッカソンに参加した"))
+    store.upsert_message(conn, make_message("l2", content="無関係な内容"))
+
+    results = store.search_fts(conn, "ハッカソン")
+    ids = {r["message_id"] for r in results}
+    check(ids == {"l1"}, "search_fts: 3文字以上クエリ (FTS経路) でもヒットする")
+
+    conn.close()
+
+
+def test_search_like_wildcard_escape(db_path: str) -> None:
+    """LIKE 経路で % を含むクエリがワイルドカードとして誤解釈されないこと。"""
+    conn = store.get_connection(db_path)
+    store.init_db(conn)
+
+    store.upsert_message(conn, make_message("w1", content="進捗50%です"))
+    store.upsert_message(conn, make_message("w2", content="無関係な内容その1"))
+
+    # "0%" は2文字なので LIKE 経路。エスケープしないと全行にマッチしてしまう
+    results = store.search_fts(conn, "0%")
+    ids = {r["message_id"] for r in results}
+    check(ids == {"w1"}, "search_fts: LIKE経路で % がリテラルとして扱われる (w1のみヒット)")
+
+    conn.close()
+
+
+def test_search_like_excludes_deleted(db_path: str) -> None:
+    """LIKE 経路でも削除済みメッセージが除外されること (FTS経路と揃える)。"""
+    conn = store.get_connection(db_path)
+    store.init_db(conn)
+
+    store.upsert_message(conn, make_message("d1", content="開発中の機能"))
+    store.mark_deleted(conn, "d1")
+
+    results = store.search_fts(conn, "開発")
+    ids = {r["message_id"] for r in results}
+    check("d1" not in ids, "search_fts: LIKE経路でも削除済みは除外される")
+
+    conn.close()
+
+
+def test_compute_input_hash(db_path: str) -> None:
+    """同じメッセージ集合なら順序が違っても同じハッシュになること。"""
+    h1 = store.compute_input_hash(["m1", "m2", "m3"])
+    h2 = store.compute_input_hash(["m3", "m1", "m2"])
+    h3 = store.compute_input_hash(["m1", "m2", "m4"])
+
+    check(h1 == h2, "compute_input_hash: 順序が違っても同じ集合なら同じ値")
+    check(h1 != h3, "compute_input_hash: 集合が違えば異なる値")
+
+
+def test_summary_cache(db_path: str) -> None:
+    """input_hash + model + prompt_version が同じなら二重挿入されないこと。"""
+    conn = store.get_connection(db_path)
+    store.init_db(conn)
+
+    input_hash = store.compute_input_hash(["m1", "m2"])
+    s1 = store.upsert_summary(
+        conn,
+        scope_kind="channel_period",
+        channel_id="ch1",
+        input_hash=input_hash,
+        input_message_count=2,
+        summary_text="要約その1",
+        model="model-a",
+        prompt_version="v1",
+        period_start="2026-08-01T00:00:00Z",
+        period_end="2026-08-02T00:00:00Z",
+    )
+    s2 = store.upsert_summary(
+        conn,
+        scope_kind="channel_period",
+        channel_id="ch1",
+        input_hash=input_hash,
+        input_message_count=2,
+        summary_text="別のテキストを渡しても再利用される",
+        model="model-a",
+        prompt_version="v1",
+        period_start="2026-08-01T00:00:00Z",
+        period_end="2026-08-02T00:00:00Z",
+    )
+
+    check(s1["summary_id"] == s2["summary_id"], "upsert_summary: 同じキャッシュキーなら二重挿入されない")
+    check(s2["summary_text"] == "要約その1", "upsert_summary: 既存の summary_text が再利用される")
+
+    rows = conn.execute("SELECT * FROM summaries WHERE input_hash = ?", (input_hash,)).fetchall()
+    check(len(rows) == 1, "upsert_summary: summaries テーブルに1行のみ")
+
+    found = store.find_summary(conn, input_hash, "model-a", "v1")
+    check(found is not None and found["summary_id"] == s1["summary_id"], "find_summary: キャッシュキーで参照できる")
+
+    not_found = store.find_summary(conn, input_hash, "model-b", "v1")
+    check(not_found is None, "find_summary: model が違えばヒットしない")
+
+    conn.close()
+
+
+def test_topics_silver_gold_and_adjudication(db_path: str) -> None:
+    """silver / gold の共存と adjudication の記録を確認する。"""
+    conn = store.get_connection(db_path)
+    store.init_db(conn)
+
+    store.upsert_message(conn, make_message("t1", content="話題A その1"))
+    store.upsert_message(conn, make_message("t2", content="話題A その2"))
+
+    silver_id = store.upsert_topic(
+        conn,
+        channel_id="ch1",
+        label="機械分割の話題A",
+        origin="silver",
+        starts_at="2026-08-01T00:00:00Z",
+        ends_at="2026-08-01T01:00:00Z",
+        algorithm="texttiling",
+        algorithm_version="v1",
+    )
+    gold_id = store.upsert_topic(
+        conn,
+        channel_id="ch1",
+        label="人手確定の話題A",
+        origin="gold",
+        starts_at="2026-08-01T00:00:00Z",
+        ends_at="2026-08-01T01:00:00Z",
+    )
+
+    store.link_topic_messages(conn, silver_id, ["t1", "t2"])
+    store.link_topic_messages(conn, gold_id, ["t1", "t2"])
+    # 冪等性確認 (同じ組を再度 link しても増えない)
+    store.link_topic_messages(conn, silver_id, ["t1"])
+
+    rows = conn.execute(
+        "SELECT origin FROM topics WHERE topic_id IN (?, ?)", (silver_id, gold_id)
+    ).fetchall()
+    origins = {r["origin"] for r in rows}
+    check(origins == {"silver", "gold"}, "topics: silver と gold が共存できる")
+
+    link_rows = conn.execute(
+        "SELECT * FROM topic_messages WHERE topic_id = ?", (silver_id,)
+    ).fetchall()
+    check(len(link_rows) == 2, "link_topic_messages: 冪等 (重複挿入されない)")
+
+    adj_id = store.record_adjudication(
+        conn,
+        silver_topic_id=silver_id,
+        action="accept",
+        gold_topic_id=gold_id,
+        note="機械分割をそのまま採用",
+    )
+    adj_row = conn.execute(
+        "SELECT * FROM adjudications WHERE adjudication_id = ?", (adj_id,)
+    ).fetchone()
+    check(adj_row is not None, "record_adjudication: 記録される")
+    check(adj_row["action"] == "accept", "record_adjudication: action が記録される")
+    check(adj_row["gold_topic_id"] == gold_id, "record_adjudication: gold_topic_id が記録される")
+
+    conn.close()
+
+
 def test_export_v2_structure(db_path: str, out_path: str) -> None:
     conn = store.get_connection(db_path)
     store.init_db(conn)
@@ -211,6 +389,13 @@ def main() -> None:
         test_mark_edited(os.path.join(tmpdir, "t2.db"))
         test_mark_deleted(os.path.join(tmpdir, "t3.db"))
         test_fts_search(os.path.join(tmpdir, "t4.db"))
+        test_search_hybrid_short_query(os.path.join(tmpdir, "t6.db"))
+        test_search_hybrid_long_query(os.path.join(tmpdir, "t7.db"))
+        test_search_like_wildcard_escape(os.path.join(tmpdir, "t8.db"))
+        test_search_like_excludes_deleted(os.path.join(tmpdir, "t9.db"))
+        test_compute_input_hash(os.path.join(tmpdir, "t10.db"))
+        test_summary_cache(os.path.join(tmpdir, "t11.db"))
+        test_topics_silver_gold_and_adjudication(os.path.join(tmpdir, "t12.db"))
         test_export_v2_structure(
             os.path.join(tmpdir, "t5.db"),
             os.path.join(tmpdir, "chronica-v2-data.js"),
