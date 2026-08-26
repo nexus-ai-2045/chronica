@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Chronica ビューアをパスフレーズ付き単一 HTML に暗号化する。
 
-chronica.html + chronica-data.js を結合し、AES-GCM(256) で暗号化した
+viewer/chronica.html と export_v2.py が出力した chronica-data.js を結合し、AES-GCM(256) で暗号化した
 配布用ファイル chronica-locked.html を生成する。
 鍵導出は PBKDF2-SHA256 310,000 回。パスフレーズはファイルに保存しない。
 
@@ -16,9 +16,12 @@ import os
 import secrets
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-VIEWER = os.path.join(BASE, "chronica.html")
-DATA = os.path.join(BASE, "chronica-data.js")
-OUT = os.path.join(BASE, "chronica-locked.html")
+REPO_ROOT = os.path.dirname(BASE)
+# 既定はリポジトリの実配置に合わせる。引数で渡された場合は
+# 「利用者のカレントディレクトリ基準」で解決する (下記 _resolve)。
+VIEWER = os.path.join(REPO_ROOT, "viewer", "chronica.html")
+DATA = os.path.join(REPO_ROOT, "data", "chronica-data.js")
+OUT = os.path.join(REPO_ROOT, "data", "chronica-locked.html")
 
 PBKDF2_ITER = 310_000
 
@@ -254,9 +257,24 @@ def main():
     args = parser.parse_args()
 
     passphrase = args.passphrase or secrets.token_urlsafe(12)
-    if args.viewer: VIEWER = os.path.join(BASE, args.viewer)
-    if args.data: DATA = os.path.join(BASE, args.data)
-    if args.out: OUT = os.path.join(BASE, args.out)
+    # 引数のパスは利用者のカレントディレクトリ基準で解決する。
+    # 以前は crypto/ 基準だったため、README の例をリポジトリルートで実行すると
+    # FileNotFoundError になっていた (E2E で検出)。
+    if args.viewer: VIEWER = os.path.abspath(args.viewer)
+    if args.data: DATA = os.path.abspath(args.data)
+    if args.out: OUT = os.path.abspath(args.out)
+
+    for label, path in (("ビューア", VIEWER), ("データ", DATA)):
+        if not os.path.isfile(path):
+            hint = (
+                "  ヒント: viewer/chronica.html と、"
+                "export_v2.py が出力した chronica-data.js のパスを指定してください。"
+            )
+            parser.error("{} が見つかりません: {}".format(label, path) + os.linesep + hint)
+
+    out_dir = os.path.dirname(OUT)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     html = bundle_html()
     payload = encrypt(html.encode("utf-8"), passphrase)
     out = LOCK_PAGE.format(payload=payload, iter=PBKDF2_ITER)

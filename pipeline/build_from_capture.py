@@ -4,7 +4,7 @@
 Chronica v2 データ生成パイプライン。
 
 2026-08-23/24 の cmux フルキャプチャ (browser-structured-capture.json) を
-全チャンネル横断で読み込み、ビューア用データ (chronica-v2-data.js) を生成する。
+全チャンネル横断で読み込み、ビューア用データ (chronica-data.js) を生成する。
 
 private local only。外部送信・deploy・push は禁止。
 
@@ -12,9 +12,9 @@ private local only。外部送信・deploy・push は禁止。
   discord/servers/<server_id>/channels/<channel_id>/captures/<capture_dir>/browser-structured-capture.json
 
 出力:
-  chronica-v2-data.js (window.CHRONICA_V2 = {...}; 形式)
+  chronica-data.js (window.CHRONICA_V2 = {...}; 形式)
 
-既存の build_chronica_data.py / chronica-data.js / chronica-chronica.html には
+既存の 既存のビューアとデータには
 一切手を触れない (別データ系統として新規に作る)。
 """
 
@@ -32,7 +32,7 @@ SERVER_ID = os.environ.get("CHRONICA_SERVER_ID", "")  # 収集対象の Discord 
 SERVER_DIR = RAW_SNAPSHOTS_DIR / "discord" / "servers" / SERVER_ID
 CHANNELS_DIR = SERVER_DIR / "channels"
 
-OUTPUT_PATH = SCRIPT_DIR / "chronica-v2-data.js"
+OUTPUT_PATH = SCRIPT_DIR / "chronica-data.js"
 
 SERVER_NAME = "対象サーバー"
 JST = timezone(timedelta(hours=9))

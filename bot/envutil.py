@@ -59,5 +59,5 @@ def get_db_path() -> str:
 
 
 def get_export_out_path() -> str:
-    """EXPORT_OUT のパスを返す。未設定なら既定値 ../data/chronica-v2-data.js (bot/ 基準)。"""
-    return os.environ.get("EXPORT_OUT", str(BOT_DIR.parent / "data" / "chronica-v2-data.js"))
+    """EXPORT_OUT のパスを返す。未設定なら既定値 ../data/chronica-data.js (bot/ 基準)。"""
+    return os.environ.get("EXPORT_OUT", str(BOT_DIR.parent / "data" / "chronica-data.js"))

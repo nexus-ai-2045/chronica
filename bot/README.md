@@ -1,7 +1,7 @@
 # Chronica Bot — Discord リアルタイム収集系
 
 対象サーバーのメッセージを SQLite にリアルタイム蓄積し、既存ビューア
-(`viewer/chronica-chronica-v2.html`) 用の `chronica-data.js` をいつでも
+(`viewer/chronica.html`) 用の `chronica-data.js` をいつでも
 再生成できるようにする Discord Bot 一式。
 
 private local only。外部送信・deploy・push は禁止 (詳細は `../README.md`)。
@@ -82,7 +82,7 @@ pip install -r requirements.txt
    python export_v2.py
    ```
    `EXPORT_OUT` (既定 `../data/chronica-data.js`) に書き出す。
-   これを `viewer/chronica-data.js` にコピーして `chronica-chronica-v2.html` を
+   これを `viewer/chronica-data.js` にコピーして `chronica.html` を
    file:// で開けば見られる。
 
 ## データの扱い
