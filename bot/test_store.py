@@ -27,6 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import export_v2
+import query
 import store
 
 PASS_COUNT = 0
@@ -379,6 +380,191 @@ def test_export_v2_structure(db_path: str, out_path: str) -> None:
     conn.close()
 
 
+def test_query_channels_and_stats(db_path: str) -> None:
+    """query.list_channels / query.get_stats が関数として直接呼べること。"""
+    conn = store.get_connection(db_path)
+    store.init_db(conn)
+
+    store.upsert_channel(conn, "chA", "g1", "雑談部屋", "text")
+    store.upsert_message(conn, make_message("q1", channel_id="chA", ts="2026-08-01T00:00:00Z"))
+    store.upsert_message(conn, make_message("q2", channel_id="chA", ts="2026-08-02T00:00:00Z"))
+
+    channels = query.list_channels(conn)
+    check(any(c["channel_id"] == "chA" and c["count"] == 2 for c in channels), "list_channels: チャンネルごとの件数が正しい")
+
+    stats = query.get_stats(conn, db_path=db_path)
+    check(stats["message_count"] == 2, "get_stats: 総件数が正しい")
+    check(stats["channel_count"] >= 1, "get_stats: チャンネル数が1以上")
+    check(stats["db_size_bytes"] is not None and stats["db_size_bytes"] > 0, "get_stats: DBサイズが取得できる")
+
+    conn.close()
+
+
+def test_query_window(db_path: str) -> None:
+    """query.window がチャンネル×期間で絞り込み、時系列順に返し、削除済みを除くこと。"""
+    conn = store.get_connection(db_path)
+    store.init_db(conn)
+
+    store.upsert_message(conn, make_message("w_a", channel_id="chW", ts="2026-08-01T03:00:00Z", content="3番目"))
+    store.upsert_message(conn, make_message("w_b", channel_id="chW", ts="2026-08-01T01:00:00Z", content="1番目"))
+    store.upsert_message(conn, make_message("w_c", channel_id="chW", ts="2026-08-01T02:00:00Z", content="2番目"))
+    # 別チャンネルは混ざらないこと
+    store.upsert_message(conn, make_message("w_other", channel_id="chOther", ts="2026-08-01T01:30:00Z"))
+    # 削除済みは除外されること
+    store.upsert_message(conn, make_message("w_deleted", channel_id="chW", ts="2026-08-01T01:45:00Z"))
+    store.mark_deleted(conn, "w_deleted")
+
+    result = query.window(conn, "chW")
+    ids = [m["message_id"] for m in result["messages"]]
+    check(ids == ["w_b", "w_c", "w_a"], "query.window: チャンネルで絞り込み時系列(ts昇順)で返る")
+    check(result["count"] == 3, "query.window: count がメッセージ数と一致する")
+    check(result["approx_chars"] == sum(len(c) for c in ["1番目", "2番目", "3番目"]), "query.window: approx_chars が概算文字数と一致する")
+    check("w_deleted" not in ids, "query.window: 削除済みは除外される")
+    check("w_other" not in ids, "query.window: 別チャンネルは混ざらない")
+
+    result_ranged = query.window(conn, "chW", since="2026-08-01T01:30:00Z", until="2026-08-01T02:30:00Z")
+    ids_ranged = [m["message_id"] for m in result_ranged["messages"]]
+    check(ids_ranged == ["w_c"], "query.window: since/until で絞り込める")
+
+    conn.close()
+
+
+def test_query_search_with_filters(db_path: str) -> None:
+    """query.search が --channel / --since を併用して絞り込めること。"""
+    conn = store.get_connection(db_path)
+    store.init_db(conn)
+
+    store.upsert_message(
+        conn, make_message("s_a", channel_id="chS1", ts="2026-08-01T00:00:00Z", content="開発の進め方について")
+    )
+    store.upsert_message(
+        conn, make_message("s_b", channel_id="chS2", ts="2026-08-02T00:00:00Z", content="開発の相談です")
+    )
+    store.upsert_message(
+        conn, make_message("s_c", channel_id="chS1", ts="2026-08-03T00:00:00Z", content="開発合宿の計画")
+    )
+
+    all_hits = query.search(conn, "開発")
+    check({r["message_id"] for r in all_hits} == {"s_a", "s_b", "s_c"}, "query.search: フィルタ無しで全件ヒットする")
+
+    channel_hits = query.search(conn, "開発", channel="chS1")
+    check({r["message_id"] for r in channel_hits} == {"s_a", "s_c"}, "query.search: --channel 相当の絞り込みが効く")
+
+    since_hits = query.search(conn, "開発", channel="chS1", since="2026-08-02T00:00:00Z")
+    check({r["message_id"] for r in since_hits} == {"s_c"}, "query.search: --channel と --since の併用が効く")
+
+    conn.close()
+
+
+def test_query_resolve_channel_by_name(db_path: str) -> None:
+    """query.resolve_channel_id が名前の部分一致で解決できること。"""
+    conn = store.get_connection(db_path)
+    store.init_db(conn)
+    store.upsert_channel(conn, "chR", "g1", "開発雑談", "text")
+
+    resolved = query.resolve_channel_id(conn, "雑談")
+    check(resolved == "chR", "resolve_channel_id: 名前の部分一致で解決できる")
+
+    try:
+        query.resolve_channel_id(conn, "存在しないチャンネル")
+        check(False, "resolve_channel_id: 未知の名前は例外になる")
+    except query.ChannelResolutionError:
+        check(True, "resolve_channel_id: 未知の名前は例外になる")
+
+    conn.close()
+
+
+def test_build_raw_payload() -> None:
+    """collector.build_raw_payload が専用列に無い情報を含み、credential 様の値を含まないこと。
+
+    collector は discord.py に依存するため、未インストール環境ではスキップする。
+    store / export_v2 / query は discord 非依存であり、そちらは常に検査される。
+    """
+    try:
+        import collector
+    except ModuleNotFoundError as exc:  # pragma: no cover - 環境依存
+        if exc.name != "discord":
+            raise
+        print("SKIP: build_raw_payload (discord.py 未インストール)")
+        return
+
+    class _FakeEmbed:
+        def to_dict(self) -> dict:
+            return {"title": "テスト埋め込み"}
+
+    class _FakeEmoji:
+        def __str__(self) -> str:
+            return "👍"
+
+    class _FakeReaction:
+        emoji = _FakeEmoji()
+        count = 3
+
+    class _FakeUser:
+        id = 111
+
+    class _FakeFlags:
+        value = 8
+
+    class _FakeType:
+        name = "default"
+
+    class _FakeStickerFormat:
+        name = "png"
+
+    class _FakeSticker:
+        id = 222
+        name = "スタンプ"
+        format = _FakeStickerFormat()
+
+    class _FakeAttachment:
+        id = 333
+        filename = "image.png"
+        url = "https://cdn.example.invalid/image.png"
+        proxy_url = "https://media.example.invalid/image.png"
+        content_type = "image/png"
+        size = 1234
+        width = 100
+        height = 100
+        ephemeral = False
+
+    from datetime import datetime, timezone
+
+    class _FakeMessage:
+        embeds = [_FakeEmbed()]
+        reactions = [_FakeReaction()]
+        mentions = [_FakeUser()]
+        raw_role_mentions = [444]
+        mention_everyone = True
+        pinned = True
+        tts = False
+        type = _FakeType()
+        flags = _FakeFlags()
+        webhook_id = None
+        stickers = [_FakeSticker()]
+        edited_at = datetime(2026, 8, 1, tzinfo=timezone.utc)
+        attachments = [_FakeAttachment()]
+
+    payload = collector.build_raw_payload(_FakeMessage())
+
+    check(payload.get("embeds") == [{"title": "テスト埋め込み"}], "build_raw_payload: embeds を含む")
+    check(payload.get("reactions") == [{"emoji": "👍", "count": 3}], "build_raw_payload: reactions を含む")
+    check(payload.get("mentions") == ["111"], "build_raw_payload: mentions を含む")
+    check(payload.get("mention_roles") == ["444"], "build_raw_payload: mention_roles を含む")
+    check(payload.get("mention_everyone") is True, "build_raw_payload: mention_everyone を含む")
+    check(payload.get("pinned") is True, "build_raw_payload: pinned を含む")
+    check("tts" not in payload, "build_raw_payload: False の tts は含めない (水増ししない)")
+    check(payload.get("type") == "default", "build_raw_payload: type を含む")
+    check(payload.get("sticker_items")[0]["name"] == "スタンプ", "build_raw_payload: sticker_items を含む")
+    check(payload.get("edited_at") == "2026-08-01T00:00:00+00:00", "build_raw_payload: edited_at を含む")
+    check(payload.get("attachments")[0]["filename"] == "image.png", "build_raw_payload: attachments の完全な dict を含む")
+
+    # credential / token 様の値が混入していないこと。
+    dumped = json.dumps(payload, ensure_ascii=False).lower()
+    check("token" not in dumped, "build_raw_payload: token という語が含まれない")
+    check("secret" not in dumped, "build_raw_payload: secret という語が含まれない")
+
+
 def main() -> None:
     # Windows では sqlite の WAL 補助ファイルがハンドル解放直後でも残ることがあり、
     # TemporaryDirectory の自動削除 (strict) が PermissionError になる場合がある。
@@ -400,6 +586,11 @@ def main() -> None:
             os.path.join(tmpdir, "t5.db"),
             os.path.join(tmpdir, "chronica-v2-data.js"),
         )
+        test_query_channels_and_stats(os.path.join(tmpdir, "t13.db"))
+        test_query_window(os.path.join(tmpdir, "t14.db"))
+        test_query_search_with_filters(os.path.join(tmpdir, "t15.db"))
+        test_query_resolve_channel_by_name(os.path.join(tmpdir, "t16.db"))
+        test_build_raw_payload()
     finally:
         gc.collect()
         shutil.rmtree(tmpdir, ignore_errors=True)

@@ -21,6 +21,7 @@ private local only。外部送信・deploy・push は禁止。
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
