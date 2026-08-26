@@ -11,7 +11,6 @@ chronica.html + chronica-data.js を結合し、AES-GCM(256) で暗号化した
 """
 import base64
 import hashlib
-import json
 import os
 import secrets
 import sys

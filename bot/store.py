@@ -126,13 +126,31 @@ def upsert_message(conn: sqlite3.Connection, msg: MessageRecord) -> None:
     conn.commit()
 
 
-def mark_edited(conn: sqlite3.Connection, message_id: str, new_content: str, edited_at: str | None = None) -> None:
-    """メッセージの content を更新し edited_at を記録する。存在しなければ何もしない。"""
+def mark_edited(
+    conn: sqlite3.Connection,
+    message_id: str,
+    new_content: str,
+    edited_at: str | None = None,
+    raw: dict[str, Any] | None = None,
+) -> None:
+    """メッセージの content を更新し edited_at を記録する。存在しなければ何もしない。
+
+    raw を渡した場合は raw_json も上書きする (編集イベントの生ペイロードを
+    再解釈用に保存するため)。raw を渡さない呼び出し (既存呼び出し互換) は
+    raw_json に触れない。
+    """
     edited_at = edited_at or utc_now_iso()
-    conn.execute(
-        "UPDATE messages SET content = ?, edited_at = ? WHERE message_id = ? AND deleted_at IS NULL",
-        (new_content, edited_at, message_id),
-    )
+    if raw is not None:
+        raw_json = json.dumps(raw, ensure_ascii=False)
+        conn.execute(
+            "UPDATE messages SET content = ?, edited_at = ?, raw_json = ? WHERE message_id = ? AND deleted_at IS NULL",
+            (new_content, edited_at, raw_json, message_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE messages SET content = ?, edited_at = ? WHERE message_id = ? AND deleted_at IS NULL",
+            (new_content, edited_at, message_id),
+        )
     conn.commit()
 
 

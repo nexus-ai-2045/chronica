@@ -45,6 +45,96 @@ def resolve_thread_parent_id(channel: Any) -> str | None:
     return None
 
 
+def build_raw_payload(message: "discord.Message") -> dict[str, Any]:
+    """discord.Message から専用列 (message_id/content/author_id 等) に無い情報だけを抽出する。
+
+    専用列と重複する情報 (id / content / author_id など) は入れない。
+    値が取れない/空の項目はキーごと省略する (None を並べて水増ししない)。
+    トークンや webhook 実行用シークレットは discord.Message / discord.Embed の
+    公開属性経由では取得できないため、ここに混入する経路は無い。
+    """
+    payload: dict[str, Any] = {}
+
+    embeds = getattr(message, "embeds", None)
+    if embeds:
+        payload["embeds"] = [e.to_dict() for e in embeds]
+
+    reactions = getattr(message, "reactions", None)
+    if reactions:
+        payload["reactions"] = [
+            {"emoji": str(r.emoji), "count": getattr(r, "count", None)} for r in reactions
+        ]
+
+    mentions = getattr(message, "mentions", None)
+    if mentions:
+        payload["mentions"] = [str(u.id) for u in mentions]
+
+    raw_role_mentions = getattr(message, "raw_role_mentions", None)
+    if raw_role_mentions:
+        payload["mention_roles"] = [str(rid) for rid in raw_role_mentions]
+    else:
+        role_mentions = getattr(message, "role_mentions", None)
+        if role_mentions:
+            payload["mention_roles"] = [str(r.id) for r in role_mentions]
+
+    if getattr(message, "mention_everyone", False):
+        payload["mention_everyone"] = True
+
+    if getattr(message, "pinned", False):
+        payload["pinned"] = True
+
+    if getattr(message, "tts", False):
+        payload["tts"] = True
+
+    msg_type = getattr(message, "type", None)
+    if msg_type is not None:
+        payload["type"] = getattr(msg_type, "name", str(msg_type))
+
+    flags = getattr(message, "flags", None)
+    if flags is not None:
+        flags_value = getattr(flags, "value", None)
+        if flags_value:
+            payload["flags"] = flags_value
+
+    webhook_id = getattr(message, "webhook_id", None)
+    if webhook_id is not None:
+        payload["webhook_id"] = str(webhook_id)
+
+    stickers = getattr(message, "stickers", None)
+    if stickers:
+        payload["sticker_items"] = [
+            {
+                "id": str(getattr(s, "id", "")),
+                "name": getattr(s, "name", None),
+                "format": getattr(getattr(s, "format", None), "name", None),
+            }
+            for s in stickers
+        ]
+
+    edited_at = getattr(message, "edited_at", None)
+    if edited_at is not None:
+        payload["edited_at"] = edited_at.isoformat()
+
+    attachments = getattr(message, "attachments", None)
+    if attachments:
+        payload["attachments"] = [
+            {
+                "id": str(a.id),
+                "filename": a.filename,
+                "url": a.url,
+                "proxy_url": getattr(a, "proxy_url", None),
+                "content_type": getattr(a, "content_type", None),
+                "size": getattr(a, "size", None),
+                "width": getattr(a, "width", None),
+                "height": getattr(a, "height", None),
+                "ephemeral": getattr(a, "ephemeral", None),
+            }
+            for a in attachments
+        ]
+
+    return payload
+
+
 def message_to_record(message: "discord.Message", source: str = "gateway") -> store.MessageRecord:
     """discord.Message から MessageRecord を組み立てる。"""
     reply_to_id = None
@@ -75,7 +165,7 @@ def message_to_record(message: "discord.Message", source: str = "gateway") -> st
         content=message.content or "",
         attachments=attachments,
         reply_to_id=reply_to_id,
-        raw={"id": str(message.id), "content": message.content, "author_id": str(message.author.id)},
+        raw=build_raw_payload(message),
         source=source,
     )
 
@@ -142,7 +232,9 @@ class ChronicaCollector(discord.Client):
         if new_content is None:
             # content が含まれない編集イベント (embed 更新など) は無視する
             return
-        store.mark_edited(self.conn, str(payload.message_id), new_content)
+        # payload.data は Discord から届く生ペイロードそのもの。専用列に無い情報の
+        # 再解釈用として raw_json にそのまま保存する (指摘1: raw_json が名ばかり対応)。
+        store.mark_edited(self.conn, str(payload.message_id), new_content, raw=data)
 
     async def on_raw_message_delete(self, payload: "discord.RawMessageDeleteEvent") -> None:
         guild_id = payload.guild_id
