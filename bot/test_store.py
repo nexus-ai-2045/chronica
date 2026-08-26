@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import export_v2
 import query
+import retry_util
 import store
 
 PASS_COUNT = 0
@@ -565,6 +566,34 @@ def test_build_raw_payload() -> None:
     check("secret" not in dumped, "build_raw_payload: secret という語が含まれない")
 
 
+def test_retry_util_should_retry() -> None:
+    """429 (レート制限) と 5xx (サーバー側一時障害) のみリトライ対象、4xx は対象外。"""
+    check(retry_util.should_retry(429) is True, "should_retry: 429 はリトライ対象")
+    check(retry_util.should_retry(500) is True, "should_retry: 500 はリトライ対象")
+    check(retry_util.should_retry(502) is True, "should_retry: 502 はリトライ対象")
+    check(retry_util.should_retry(599) is True, "should_retry: 599 はリトライ対象")
+    check(retry_util.should_retry(403) is False, "should_retry: 403 はリトライ対象外")
+    check(retry_util.should_retry(404) is False, "should_retry: 404 はリトライ対象外")
+    check(retry_util.should_retry(400) is False, "should_retry: 400 はリトライ対象外")
+    check(retry_util.should_retry(200) is False, "should_retry: 200 はリトライ対象外")
+
+
+def test_retry_util_compute_backoff() -> None:
+    """Retry-After があればそれを使う。無ければ指数バックオフで、60秒で頭打ちになる。"""
+    check(retry_util.compute_backoff(1, retry_after=3.5) == 3.5, "compute_backoff: Retry-After を優先する")
+    check(retry_util.compute_backoff(1, retry_after=None) == 1.0, "compute_backoff: 1回目は1秒 (指数バックオフ初期値)")
+    check(retry_util.compute_backoff(2, retry_after=None) == 2.0, "compute_backoff: 2回目は2秒")
+    check(retry_util.compute_backoff(3, retry_after=None) == 4.0, "compute_backoff: 3回目は4秒")
+    check(retry_util.compute_backoff(4, retry_after=None) == 8.0, "compute_backoff: 4回目は8秒")
+    check(retry_util.compute_backoff(10, retry_after=None) == 60.0, "compute_backoff: 指数バックオフは60秒で頭打ち")
+    check(retry_util.compute_backoff(1, retry_after=999.0) == 60.0, "compute_backoff: Retry-Afterも60秒で頭打ち")
+
+
+def test_retry_util_max_retries_constant() -> None:
+    """最大リトライ回数が5回であること (仕様固定値の回帰検知)。"""
+    check(retry_util.MAX_RETRIES == 5, "MAX_RETRIES: 最大5回")
+
+
 def main() -> None:
     # Windows では sqlite の WAL 補助ファイルがハンドル解放直後でも残ることがあり、
     # TemporaryDirectory の自動削除 (strict) が PermissionError になる場合がある。
@@ -591,6 +620,9 @@ def main() -> None:
         test_query_search_with_filters(os.path.join(tmpdir, "t15.db"))
         test_query_resolve_channel_by_name(os.path.join(tmpdir, "t16.db"))
         test_build_raw_payload()
+        test_retry_util_should_retry()
+        test_retry_util_compute_backoff()
+        test_retry_util_max_retries_constant()
     finally:
         gc.collect()
         shutil.rmtree(tmpdir, ignore_errors=True)

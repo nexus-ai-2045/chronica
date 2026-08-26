@@ -22,13 +22,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import time
 from typing import Any
 
 import discord
 
 import envutil
 import store
+from retry_util import MAX_RETRIES, compute_backoff, should_retry
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("chronica.backfill")
@@ -53,6 +53,82 @@ def message_to_record(message: "discord.Message") -> store.MessageRecord:
     return _convert(message, source="backfill")
 
 
+def _extract_retry_after(exc: "discord.HTTPException") -> float | None:
+    """HTTPException から Retry-After 秒数を読み取る (無い/読めない場合は None)。"""
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) if response is not None else None
+    if not headers:
+        return None
+    value = headers.get("Retry-After")
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _with_retry(coro_factory: Any, *, what: str, channel_id: str) -> Any:
+    """discord.HTTPException の 429 (レート制限) / 5xx (一時障害) をリトライする。
+
+    coro_factory: 呼び出すたびに新しい coroutine を返す callable (リトライのため
+    毎回作り直す必要がある)。429/5xx 以外の HTTPException (403/404 等) はそのまま
+    re-raise し、現行動作 (即座に諦める) を維持する。
+    """
+    attempt = 0
+    while True:
+        try:
+            return await coro_factory()
+        except discord.HTTPException as exc:
+            status = exc.status
+            if not should_retry(status):
+                raise
+            attempt += 1
+            if attempt > MAX_RETRIES:
+                logger.error(
+                    "%s: リトライ上限 (%d回) に達したため諦めます channel=%s status=%s",
+                    what,
+                    MAX_RETRIES,
+                    channel_id,
+                    status,
+                )
+                raise
+            wait_sec = compute_backoff(attempt, _extract_retry_after(exc))
+            logger.warning(
+                "%s: status=%s のため %d回目のリトライ、%.1f秒待機 channel=%s",
+                what,
+                status,
+                attempt,
+                wait_sec,
+                channel_id,
+            )
+            await asyncio.sleep(wait_sec)
+
+
+async def _collect_archived_threads(container: Any, *, label: str, channel_id: str) -> list[Any]:
+    """archived_threads を全部集めてリストで返す (429/5xx はリトライ)。
+
+    async generator は途中失敗時にそのまま再開できないため、1回の試行につき
+    最初から集め直す (container.archived_threads() は目的の一覧を取り直すだけで
+    副作用が無いため、途中まで集めた分を含めて破棄しても安全)。
+    """
+
+    async def _drain() -> list[Any]:
+        result: list[Any] = []
+        async for archived_thread in container.archived_threads(limit=None):
+            result.append(archived_thread)
+        return result
+
+    try:
+        return await _with_retry(_drain, what=f"archived_threads{label} 取得", channel_id=channel_id)
+    except discord.Forbidden:
+        logger.warning("archived_threads%s 取得権限なし: channel=%s", label, channel_id)
+        return []
+    except discord.HTTPException as exc:
+        logger.warning("archived_threads%s 取得失敗: channel=%s err=%s", label, channel_id, exc)
+        return []
+
+
 async def iter_target_channels(guild: "discord.Guild") -> list[Any]:
     """バックフィル対象のチャンネル (テキストチャンネル + アクティブ/アーカイブ済みスレッド) を集める。"""
     targets: list[Any] = []
@@ -60,27 +136,56 @@ async def iter_target_channels(guild: "discord.Guild") -> list[Any]:
         targets.append(channel)
         for thread in channel.threads:
             targets.append(thread)
-        try:
-            async for archived_thread in channel.archived_threads(limit=None):
-                targets.append(archived_thread)
-        except discord.Forbidden:
-            logger.warning("archived_threads 取得権限なし: channel=%s", channel.id)
-        except discord.HTTPException as exc:
-            logger.warning("archived_threads 取得失敗: channel=%s err=%s", channel.id, exc)
+        targets.extend(await _collect_archived_threads(channel, label="", channel_id=str(channel.id)))
 
     # フォーラムチャンネル (投稿=スレッド) にも対応
     for forum in getattr(guild, "forums", []):
         for thread in forum.threads:
             targets.append(thread)
-        try:
-            async for archived_thread in forum.archived_threads(limit=None):
-                targets.append(archived_thread)
-        except discord.Forbidden:
-            logger.warning("archived_threads (forum) 取得権限なし: channel=%s", forum.id)
-        except discord.HTTPException as exc:
-            logger.warning("archived_threads (forum) 取得失敗: channel=%s err=%s", forum.id, exc)
+        targets.extend(await _collect_archived_threads(forum, label=" (forum)", channel_id=str(forum.id)))
 
     return targets
+
+
+async def _history_with_retry(channel: Any, *, oldest_first: bool, after: Any, channel_id: str) -> Any:
+    """channel.history を 429/5xx でリトライしながら列挙する async generator。
+
+    通常の async generator は例外発生後に途中から続けられない (再度呼ぶと最初から
+    やり直しになる) ため、直近に yield できたメッセージの id を新しい after カーソル
+    として history() を作り直すことで、取得済み分を失わず・再取得もせず続きから
+    再開する (走査の途中で 429 が出ても最初からやり直さないための設計)。
+    """
+    current_after = after
+    attempt = 0
+    while True:
+        try:
+            async for message in channel.history(limit=None, oldest_first=oldest_first, after=current_after):
+                yield message
+                current_after = discord.Object(id=message.id)
+                attempt = 0  # 進捗があったのでリトライ回数をリセット
+            return
+        except discord.HTTPException as exc:
+            status = exc.status
+            if not should_retry(status):
+                raise
+            attempt += 1
+            if attempt > MAX_RETRIES:
+                logger.error(
+                    "channel.history 取得: リトライ上限 (%d回) に達したため諦めます channel=%s status=%s",
+                    MAX_RETRIES,
+                    channel_id,
+                    status,
+                )
+                raise
+            wait_sec = compute_backoff(attempt, _extract_retry_after(exc))
+            logger.warning(
+                "channel.history 取得: status=%s のため %d回目のリトライ、%.1f秒待機 channel=%s (取得済みの続きから再開)",
+                status,
+                attempt,
+                wait_sec,
+                channel_id,
+            )
+            await asyncio.sleep(wait_sec)
 
 
 async def backfill_channel(conn: Any, channel: Any, incremental: bool) -> None:
@@ -106,7 +211,9 @@ async def backfill_channel(conn: Any, channel: Any, incremental: bool) -> None:
     count = 0
 
     try:
-        async for message in channel.history(limit=None, oldest_first=oldest_first, after=after):
+        async for message in _history_with_retry(
+            channel, oldest_first=oldest_first, after=after, channel_id=channel_id
+        ):
             record = message_to_record(message)
             store.upsert_message(conn, record)
             count += 1
@@ -143,7 +250,8 @@ async def run_backfill(token: str, allowlist: set[str], db_path: str, incrementa
                 targets = await iter_target_channels(guild)
                 for channel in targets:
                     await backfill_channel(conn, channel, incremental)
-                    time.sleep(CHANNEL_SLEEP_SEC)
+                    # 同期 sleep は event loop を止め gateway heartbeat も止まるため asyncio 版を使う
+                    await asyncio.sleep(CHANNEL_SLEEP_SEC)
         finally:
             await client.close()
 
