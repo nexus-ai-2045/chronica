@@ -84,12 +84,17 @@ jobs:
         run: |
           set -e
           fail=0
-          for pat in '*.db' '*.ndjson' '*-locked.html' 'chronica-data.js' '.env'; do
-            if git ls-files | grep -q -- "$pat"; then
-              echo "::error::追跡してはいけないファイルが含まれています: $pat"
-              fail=1
-            fi
-          done
+          # basename で完全一致させる。'.env' が '.env.example' や 'envutil.py' に
+          # 部分一致して誤検知した実績があるため、パターンは行頭・行末で固定する。
+          while IFS= read -r f; do
+            b="${f##*/}"
+            case "$b" in
+              *.db|*.ndjson|*-locked.html|chronica-data.js|.env)
+                echo "::error::追跡してはいけないファイルが含まれています: $f"
+                fail=1
+                ;;
+            esac
+          done < <(git ls-files)
           exit $fail
 
       - name: No personal absolute paths
