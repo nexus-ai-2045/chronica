@@ -108,10 +108,32 @@ Bot 常駐で新規・編集・削除を自動追従。
 | **4** | 履歴を取り込む | `bot/backfill.py` |
 | **5** | 常駐して追従する | `bot/collector.py` |
 | **6** | ビューア用データを出す | `bot/export_v2.py` |
-| **7** | ブラウザで開く | `viewer/chronica.html`（サーバー不要） |
+| **7** | ブラウザで開く | 出力された `chronica-data.js` を `viewer/` に置いて `chronica.html` を開く（サーバー不要） |
 
 共有したいときは、合言葉つきの単一 HTML を書き出せます（AES-256-GCM / PBKDF2 310,000 回）。<br>
 **復号後のデータは回収できない**ので、渡す相手を決めてから使ってください。
+
+---
+
+## 🤖 AI に渡す
+
+ビューアで見るだけでなく、**コマンドラインから引いて LLM に渡せます**。
+
+| やりたいこと | コマンド |
+|---|---|
+| 言葉で探す | `bot/query.py search <語>` |
+| **要約の材料を取る** | `bot/query.py window --channel <名前> --since <日付>` |
+| チャンネル一覧 | `bot/query.py channels` |
+| 全体の統計 | `bot/query.py stats` |
+
+`--json` を付けると、**そのまま LLM に渡せる形**で出ます。<br>
+`--channel` は名前の一部でも解決します（複数該当するときは候補を出して止まります）。
+
+検索は日本語の**2文字語でも引けます**。3文字以上は全文検索索引、2文字以下は全表走査という
+使い分けで、27,797 件で 30ms 台です（[理由](docs/adr/0001-japanese-search-trigram-like-hybrid.md)）。
+
+> `--db` はサブコマンドより**前**に置きます（例: `bot/query.py --db data/chronica.db search 開発`）。
+> `.env` に `CHRONICA_DB` を書いておけば省略できます。
 
 <details>
 <summary>📁 ディレクトリ構成</summary>
