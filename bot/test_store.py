@@ -613,7 +613,7 @@ def main() -> None:
         test_topics_silver_gold_and_adjudication(os.path.join(tmpdir, "t12.db"))
         test_export_v2_structure(
             os.path.join(tmpdir, "t5.db"),
-            os.path.join(tmpdir, "chronica-v2-data.js"),
+            os.path.join(tmpdir, "chronica-data.js"),
         )
         test_query_channels_and_stats(os.path.join(tmpdir, "t13.db"))
         test_query_window(os.path.join(tmpdir, "t14.db"))
