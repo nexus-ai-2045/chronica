@@ -418,6 +418,14 @@ function buildModel(data) {
   }
   const hideTip = () => tooltip.style.opacity = 0;
 
+  // Discord 由来の表示名・チャンネル名・本文を innerHTML に渡す箇所で使う。
+  // ローカル表示でも入力データは未信頼なので、HTML として解釈させない。
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, ch => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    })[ch]);
+  }
+
   function elt(tag, attrs) {
     const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
     for (const k in attrs) e.setAttribute(k, attrs[k]);
@@ -497,7 +505,7 @@ function buildModel(data) {
       b.setAttribute("aria-pressed", String(isSelectedSeries(sm)));
       const name = sm.kind === "channel" ? model.resolveChannel(sm.c).name : ("その他（" + sm.cs.length + "ch）");
       const color = sm.kind === "channel" ? topicColor(sm.pos) : css("--baseline");
-      b.innerHTML = '<span class="sw" style="background:' + color + '"></span>' + name +
+      b.innerHTML = '<span class="sw" style="background:' + color + '"></span>' + escapeHtml(name) +
         '<span style="color:var(--ink-muted)">' + sm.total + '</span>';
       b.addEventListener("click", () => selectSeries(sm));
       box.appendChild(b);
@@ -568,7 +576,7 @@ function buildModel(data) {
         const d = Math.max(0, Math.min(DAYS - 1, Math.round(((e.clientX - rect.left) - padL) / iw * (DAYS - 1))));
         const v = SERIES[pos][d];
         showTip(
-          '<div class="tt-top"><span class="tt-sw" style="background:' + fill + '"></span>' + label + '</div>' +
+          '<div class="tt-top"><span class="tt-sw" style="background:' + fill + '"></span>' + escapeHtml(label) + '</div>' +
           '<div class="tt-sub">' + fmtDate(START + d * DAY) + ' ・ ' + (v ? v + " 件" : "取得なし") + '</div>',
           e.clientX, e.clientY);
       });
@@ -733,9 +741,9 @@ function buildModel(data) {
       const hit = elt("circle", { cx: c[0], cy: c[1], r: 10, fill: "transparent" });
       hit.style.cursor = "pointer";
       hit.addEventListener("mousemove", e => showTip(
-        '<div class="tt-top"><span class="tt-sw" style="background:' + selectionColor() + '"></span>' + m.a +
+        '<div class="tt-top"><span class="tt-sw" style="background:' + selectionColor() + '"></span>' + escapeHtml(m.a) +
         '<span class="tt-sub">・' + fmtBoth(m.d) + '</span></div>' +
-        '<div class="tt-body">' + (m.x && m.x.length > 90 ? m.x.slice(0, 90) + "…" : (m.x || "")) + '</div>', e.clientX, e.clientY));
+        '<div class="tt-body">' + escapeHtml(m.x && m.x.length > 90 ? m.x.slice(0, 90) + "…" : (m.x || "")) + '</div>', e.clientX, e.clientY));
       hit.addEventListener("mouseleave", hideTip);
       svg.appendChild(hit);
     });
@@ -746,9 +754,9 @@ function buildModel(data) {
     const refMsg = (m.ref != null) ? model.messages.find(mm => mm.id === m.ref) : null; // 検索結果は件数上限つきのため許容
     const replyNote = refMsg ? (" ↩ " + refMsg.a + " への返信") : "";
     const ch = model.resolveChannel(m.c);
-    return '<div class="avatar" style="background:' + avatarColor(m.a) + '">' + (m.a ? m.a[0] : "?") + '</div>' +
-      '<div><div class="meta"><b>' + m.a + '</b>' + fmtBoth(m.d) +
-      '<span class="topic-tag" style="background:' + colorForRow + '">' + ch.name + '</span><span>' + replyNote + '</span></div>' +
+    return '<div class="avatar" style="background:' + avatarColor(m.a) + '">' + escapeHtml(m.a ? m.a[0] : "?") + '</div>' +
+      '<div><div class="meta"><b>' + escapeHtml(m.a) + '</b>' + fmtBoth(m.d) +
+      '<span class="topic-tag" style="background:' + colorForRow + '">' + escapeHtml(ch.name) + '</span><span>' + escapeHtml(replyNote) + '</span></div>' +
       '<div class="text"></div></div>';
   }
   function appendMsgRow(box, m, colorForRow) {
