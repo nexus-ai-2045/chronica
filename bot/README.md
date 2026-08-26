@@ -85,6 +85,21 @@ pip install -r requirements.txt
    これを `viewer/chronica-data.js` にコピーして `chronica.html` を
    file:// で開けば見られる。
 
+4. **コマンドラインから引く** (ビューアを使わず LLM に渡したい場合):
+   ```
+   python query.py --db ../data/chronica.db search 開発
+   python query.py --db ../data/chronica.db window --channel 雑談 --since 2026-08-01
+   python query.py --db ../data/chronica.db channels
+   python query.py --db ../data/chronica.db stats
+   ```
+   `--json` で LLM にそのまま渡せる形式になる。
+   `--db` は**サブコマンドより前**に置く (親パーサの引数のため)。
+   `.env` に `CHRONICA_DB` を書いておけば省略できる。
+
+   `window` は「このチャンネルのこの期間」を時系列で返すので、要約の入力取得に使う。
+   検索は 3 文字以上なら FTS5、2 文字以下は LIKE 全表走査に自動で切り替わる
+   (日本語の 2 文字語が FTS5 trigram にヒットしないため。`docs/adr/0001-...` 参照)。
+
 ## データの扱い
 
 - `data/` 配下 (DB・生成 JS) はすべて `.gitignore` 済み。commit されない。
