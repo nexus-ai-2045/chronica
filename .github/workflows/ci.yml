@@ -58,14 +58,21 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: CLI entrypoints must be reachable
+      - name: Dependency-free entrypoints must be reachable
         # 実装とテストが 1 対 1 だと「外部から呼べない機能」が緑のまま残る。
-        # 利用者が実際に叩く入口が起動することをここで担保する。
+        # discord.py を必要としない入口は、依存インストール無しで起動できること。
         run: |
           python bot/query.py --help
           python bot/export_v2.py --help
+          python crypto/build_chronica_locked.py --help
+
+      - name: Bot entrypoints must be reachable (with discord.py)
+        # backfill / collector は Bot 用のため discord.py が要る。
+        # 依存を入れたうえで起動できることを別ステップで担保する。
+        run: |
+          python -m pip install --quiet -r bot/requirements.txt
           python bot/backfill.py --help
-          python crypto/build_chronica_locked.py --help || true
+          python -c "import collector; print('collector import OK')" || (cd bot && python -c "import collector; print('collector import OK')")
 
       - name: Pipeline must not crash on import
         run: python -c "import sys; sys.path.insert(0, 'pipeline'); import build_from_capture"

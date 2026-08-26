@@ -9,11 +9,11 @@ chronica.html + chronica-data.js を結合し、AES-GCM(256) で暗号化した
   python build_chronica_locked.py            # パスフレーズを自動生成して表示
   python build_chronica_locked.py <合言葉>   # 指定した合言葉を使う
 """
+import argparse
 import base64
 import hashlib
 import os
 import secrets
-import sys
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 VIEWER = os.path.join(BASE, "chronica.html")
@@ -238,12 +238,25 @@ document.getElementById("f").addEventListener("submit", async e => {{
 
 
 def main():
-    # 使い方: build_chronica_locked.py [合言葉] [viewer.html] [data.js] [out.html]
     global VIEWER, DATA, OUT
-    passphrase = sys.argv[1] if len(sys.argv) > 1 else secrets.token_urlsafe(12)
-    if len(sys.argv) > 2: VIEWER = os.path.join(BASE, sys.argv[2])
-    if len(sys.argv) > 3: DATA = os.path.join(BASE, sys.argv[3])
-    if len(sys.argv) > 4: OUT = os.path.join(BASE, sys.argv[4])
+    parser = argparse.ArgumentParser(
+        description="ビューアとデータを結合し、合言葉つきの単一 HTML を生成する。",
+        epilog="合言葉を省略すると安全な値を自動生成して表示する。",
+    )
+    parser.add_argument("passphrase", nargs="?", default=None,
+                        help="復号に使う合言葉 (省略時は自動生成)")
+    parser.add_argument("viewer", nargs="?", default=None,
+                        help="ビューア HTML のファイル名 (既定: chronica.html)")
+    parser.add_argument("data", nargs="?", default=None,
+                        help="データ JS のファイル名 (既定: chronica-data.js)")
+    parser.add_argument("out", nargs="?", default=None,
+                        help="出力先のファイル名 (既定: chronica-locked.html)")
+    args = parser.parse_args()
+
+    passphrase = args.passphrase or secrets.token_urlsafe(12)
+    if args.viewer: VIEWER = os.path.join(BASE, args.viewer)
+    if args.data: DATA = os.path.join(BASE, args.data)
+    if args.out: OUT = os.path.join(BASE, args.out)
     html = bundle_html()
     payload = encrypt(html.encode("utf-8"), passphrase)
     out = LOCK_PAGE.format(payload=payload, iter=PBKDF2_ITER)
