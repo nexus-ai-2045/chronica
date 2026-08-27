@@ -594,6 +594,23 @@ def test_retry_util_max_retries_constant() -> None:
     check(retry_util.MAX_RETRIES == 5, "MAX_RETRIES: 最大5回")
 
 
+def test_viewer_untrusted_fields_are_escaped() -> None:
+    """Discord 由来文字列を innerHTML に直結しないことを静的に回帰検知する。"""
+    viewer = (Path(__file__).resolve().parents[1] / "viewer" / "chronica.html").read_text(
+        encoding="utf-8"
+    )
+    check("function escapeHtml(value)" in viewer, "viewer XSS: HTML escape helper がある")
+    for expression, label in (
+        ("escapeHtml(name)", "チャンネル chip"),
+        ("escapeHtml(label)", "チャンネル tooltip"),
+        ("escapeHtml(m.a)", "発言者名"),
+        ("escapeHtml(m.x && m.x.length", "本文 tooltip"),
+        ("escapeHtml(ch.name)", "詳細のチャンネル名"),
+        ("escapeHtml(replyNote)", "返信先表示名"),
+    ):
+        check(expression in viewer, f"viewer XSS: {label} を escape する")
+
+
 def main() -> None:
     # Windows では sqlite の WAL 補助ファイルがハンドル解放直後でも残ることがあり、
     # TemporaryDirectory の自動削除 (strict) が PermissionError になる場合がある。
@@ -623,6 +640,7 @@ def main() -> None:
         test_retry_util_should_retry()
         test_retry_util_compute_backoff()
         test_retry_util_max_retries_constant()
+        test_viewer_untrusted_fields_are_escaped()
     finally:
         gc.collect()
         shutil.rmtree(tmpdir, ignore_errors=True)
