@@ -11,8 +11,8 @@ repo-preflight の検査記録。公開・共有・リリースの前に確認�
 - 変更: 目的・構成図・AI向けの安全な導入文・制約をREADMEへ追加
 - ローカル検査: `bot/test_store.py` 24 assertions PASS、README release design PASS、secret 0件、personal path 0件、`git diff --check` PASS
 - リリース判定: `v0.1.0` 後の差分はREADME整備のみのため、新しいversion/tag/Releaseは不要
-- CI現況: `.github/workflows` は未構成。repo-preflightのCI判定は `unknown` であり、remote CI成功を主張しない
-- 停止線: exact diffの人間目視、公開名義、CI未構成を受容するか別変更でCIを追加するかの判断後までGitHubへ書き込まない
+- CI現況: `.github/workflows/ci.yml` が構成済み。Draft PR #9 の `Test (Python 3.10 / 3.11 / 3.12)`、`Data boundary`、`Entrypoint smoke` は2026-08-28の実測で5件すべて成功
+- 停止線: exact diffの人間目視とDraft解除・mergeの明示承認まで、ready化、merge、tag、GitHub Releaseは行わない
 
 
 ## 毎回確認する
