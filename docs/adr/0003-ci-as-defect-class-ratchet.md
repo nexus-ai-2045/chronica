@@ -38,6 +38,7 @@ Accepted
 | `pyflakes` の `undefined name` | 起動即クラッシュ | **0 件**（現在値） |
 | entrypoint smoke（`--help` が通る） | **到達経路が無い機能** | 全 CLI |
 | data boundary | 実データ・個人パスの混入 | 0 件 |
+| viewer contract test | **モジュール間の接続点の不一致** | 6 検査すべて green |
 
 CI 構成は `discord-context-bridge` の `.github/workflows/ci.yml` を土台にした。
 DCB は既に `compileall src tests scripts` で全ディレクトリを対象にしており、
@@ -53,6 +54,29 @@ entrypoint smoke により「テストは緑だが使えない機能」が検知
 
 **限界**: 指摘 1（ドキュメントとコードの乖離）は完全には機械化できていない。
 `raw_json` の中身が痩せていることは、型でも構文でも検知できない。
+
+## 追記 (2026-08-28): 接続点の不一致を欠陥クラスとして追加
+
+v0.1.0 は、エクスポータが `chronica-v2-data.js` を書き、ビューアが `chronica-data.js` を
+読む状態のまま出荷された。README どおりに操作すると空画面になる。
+**このとき単体テストも上記 4 ジョブも全て緑だった。**
+
+原因は、両者が「ファイル名」と「グローバル変数名」という 2 つの文字列でしか
+繋がっておらず、その一致を誰も検査していなかったこと。片方だけ変えても、
+どちらのモジュールも単体では正しいままである。
+
+これは `consumer-driven contract test` が扱う欠陥クラスである（Pact 等の先行実装がある）。
+consumer（ビューア）が要求する形を HTML から読み取り、provider（エクスポータ）の
+実出力がそれを満たすかを検査する `bot/test_viewer_contract.py` を追加した。
+
+**検知力の確認（対照実験）**: v0.1.0 の不一致を実際に注入して両者を走らせた。
+
+| | 結果 |
+|---|---|
+| `test_viewer_contract.py` | **RC=1**（`既定=chronica-v2-data.js / viewer=chronica-data.js` と表示して落ちる） |
+| `test_store.py`（既存 91 assertions） | RC=0（**見逃す**） |
+
+落ちることを確認していないテストは、欠陥クラスを塞いだ証拠にならない。
 本 ADR ではテストで「専用列に無い情報が含まれること」を確認するに留める。
 より一般的な doc-code 整合の検知は今後の課題として残す。
 

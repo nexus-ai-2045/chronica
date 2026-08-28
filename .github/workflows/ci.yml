@@ -46,6 +46,11 @@ jobs:
       - name: Unit tests
         run: python bot/test_store.py
 
+      # エクスポータとビューアは「ファイル名」と「グローバル変数名」の文字列でしか
+      # 繋がっておらず、片方だけ変えても単体テストは緑のまま通る (v0.1.0 の空画面出荷)。
+      - name: Viewer contract test
+        run: python bot/test_viewer_contract.py
+
   entrypoints:
     name: Entrypoint smoke
     runs-on: ubuntu-latest
