@@ -4,6 +4,16 @@
 
 repo-preflight の検査記録。公開・共有・リリースの前に確認する項目です。
 
+## 2026-08-25 — README情報設計の更新候補
+
+- 対象: `origin/main@e015e2d9ac33c4edd3af01460e007b03b283db53`
+- 外部操作: なし（commit、push、PR、tag、GitHub Releaseは未実行）
+- 変更: 目的・構成図・AI向けの安全な導入文・制約をREADMEへ追加
+- ローカル検査: `bot/test_store.py` 24 assertions PASS、README release design PASS、secret 0件、personal path 0件、`git diff --check` PASS
+- リリース判定: `v0.1.0` 後の差分はREADME整備のみのため、新しいversion/tag/Releaseは不要
+- CI現況: `.github/workflows` は未構成。repo-preflightのCI判定は `unknown` であり、remote CI成功を主張しない
+- 停止線: exact diffの人間目視、公開名義、CI未構成を受容するか別変更でCIを追加するかの判断後までGitHubへ書き込まない
+
 
 ## 毎回確認する
 
