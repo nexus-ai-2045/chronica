@@ -4,7 +4,8 @@
 --   - dedupe は message_id (PK) のみ。本文 hash は使わない。
 --   - 削除は物理削除せず deleted_at を記録する (エクスポート時に除外)。
 --   - 編集は content を更新し edited_at を記録する。
---   - 受信 payload の raw JSON を raw_json に保存し、後で再解釈できるようにする。
+--   - 専用列に無い受信情報 (embeds / reactions / mentions 等) を raw_json に保存し、
+--     後で再解釈できるようにする。専用列と重複する項目は入れない。
 
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
@@ -23,7 +24,7 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT NOT NULL DEFAULT '',
     attachments_json TEXT NOT NULL DEFAULT '[]',
     reply_to_id TEXT,                  -- 返信先 message_id (無ければ NULL)
-    raw_json TEXT,                     -- 受信 payload の生 JSON (再解釈用)
+    raw_json TEXT,                     -- 専用列に無い受信情報のみ (embeds/reactions/mentions 等)
     ingested_at TEXT NOT NULL,         -- このレコードを book に取り込んだ時刻 (ISO8601, UTC)
     source TEXT NOT NULL DEFAULT 'gateway'  -- 'gateway' | 'backfill'
 );

@@ -26,7 +26,8 @@ Chronica を「AI に DB をコンテキストとして渡す」用途で使う�
 そこから**再構築可能な派生ビュー（projection）**として持つ。
 派生を捨てても生ログから作り直せる状態を維持する。
 
-`raw_json` に受信ペイロードを残しているのは、この再構築可能性のためである。
+`raw_json` に、専用列へ載せていない受信情報 (embeds / reactions / mentions 等) を残しているのは、
+この再構築可能性のためである。専用列と重複する項目は保存しない (容量だけ増えるため)。
 
 `medallion architecture`（bronze / silver / gold の 3 層）は採用しない。
 単一 SQLite・数万件規模に対して語彙が過剰であり、`raw` / `derived` の 2 層で足りる。
