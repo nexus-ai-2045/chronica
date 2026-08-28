@@ -106,4 +106,5 @@ pip install -r requirements.txt
 - `.env` も `.gitignore` 済み。commit されない。
 - 削除されたメッセージは物理削除せず `deleted_at` を立てるだけ (`export_v2.py` は除外して出力)。
 - 編集されたメッセージは `content` を上書きし `edited_at` を記録する (履歴は保持しない)。
-- 受信 payload の生 JSON を `raw_json` 列に保存しているので、後から仕様変更があっても再解釈できる。
+- 専用列に無い受信情報 (embeds / reactions / mentions / pinned など) を `raw_json` 列に保存しているので、
+  後から仕様変更があっても再解釈できる。専用列と重複する項目 (id / content / author_id 等) は入れない。
