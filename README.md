@@ -135,6 +135,26 @@ AIと一緒に導入を確認する場合は、次をそのまま貼り付けら
 
 ---
 
+## 収集と保存だけ使いたい場合
+
+ビューアは要らず、**「Discord のログを自分の SQLite に貯める」ところだけ**が欲しい場合は、
+[`bot/`](bot/) だけを見てください。**このディレクトリは単体で動きます。**
+
+| 見るもの | ファイル |
+|---|---|
+| **DB 設計** | [`bot/schema.sql`](bot/schema.sql) — テーブル・トリガ・全文検索索引 |
+| **収集** | [`bot/collector.py`](bot/collector.py)（常駐・リアルタイム）/ [`bot/backfill.py`](bot/backfill.py)（履歴・再開可） |
+| **取り出し** | [`bot/query.py`](bot/query.py)（CLI・`--json`）/ [`bot/export_v2.py`](bot/export_v2.py)（閲覧用データ） |
+| **手順** | [`bot/README.md`](bot/README.md) — Bot の作り方・必要な権限・運用 |
+
+- `bot/` の中は `bot/` の外を参照しません。ビューア・暗号化・移行用パイプラインとは独立しています
+- 外部依存は `discord.py` **1 本**だけ
+- `bot/store.py` は discord.py に依存しないので、**Bot を用意する前に DB 層だけ動かして確認できます**
+  （discord.py 未インストールの状態で `bot/test_store.py` を実行すると、Bot 依存の検査だけ
+  自動でスキップして **78 assertions が通ります**。インストール済みなら 91）
+
+---
+
 ## AI に渡す
 
 ビューアで見るだけでなく、**コマンドラインから引いて LLM に渡せます**。
