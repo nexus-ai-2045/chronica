@@ -4,6 +4,16 @@
 
 repo-preflight の検査記録。公開・共有・リリースの前に確認する項目です。
 
+## 2026-08-25 — README情報設計の更新候補
+
+- 対象: `origin/main@e015e2d9ac33c4edd3af01460e007b03b283db53`
+- 外部操作: なし（commit、push、PR、tag、GitHub Releaseは未実行）
+- 変更: 目的・構成図・AI向けの安全な導入文・制約をREADMEへ追加
+- ローカル検査: `bot/test_store.py` 24 assertions PASS、README release design PASS、secret 0件、personal path 0件、`git diff --check` PASS
+- リリース判定: `v0.1.0` 後の差分はREADME整備のみのため、新しいversion/tag/Releaseは不要
+- CI現況: `.github/workflows/ci.yml` が構成済み。Draft PR #9 の `Test (Python 3.10 / 3.11 / 3.12)`、`Data boundary`、`Entrypoint smoke` は2026-08-28の実測で5件すべて成功
+- 停止線: exact diffの人間目視とDraft解除・mergeの明示承認まで、ready化、merge、tag、GitHub Releaseは行わない
+
 
 ## 毎回確認する
 
