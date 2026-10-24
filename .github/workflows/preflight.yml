@@ -1,0 +1,26 @@
+name: preflight
+
+# 共通の入口（repo-preflight の preflight-gate）を SHA 固定で呼ぶ。
+# 固定先: repo-preflight v0.10.0（保護された v* タグから辿れる SHA）。
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    uses: nexus-ai-2045/repo-preflight/.github/workflows/preflight-gate.yml@5b7c774deb8e9abcf0fce0c5f39ec1c1f3a894f3 # v0.10.0
+    with:
+      preflight-ref: 5b7c774deb8e9abcf0fce0c5f39ec1c1f3a894f3 # v0.10.0（uses の @ と同じ SHA）
+  # 必須にするのはこの集約ジョブ。if: で飛ばしても skipped は成功にならず赤になる
+  all-green:
+    if: always()
+    needs: [gate]
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.gate.result }}" = success
